@@ -819,14 +819,17 @@ def estimate_sunlight(state: dict, floor, side: str = "all", address: str | None
 # Listing phrases -> the claim they make and how we check it. No LLM inside the tool:
 # a keyword map keeps the check reproducible and the evidence traceable.
 LISTING_CLAIMS = [
-    ("sunny", r"sun[- ]?(drenched|filled|lit|soaked)|\bsunny\b|\bsunlight\b|bright|light[- ]filled|natural light|tons of light|flooded with light"),
-    ("well_maintained", r"well[- ]maintained|well[- ]kept|\brenovated\b|pristine|immaculate|meticulous|mint condition|newly updated"),
+    ("sunny", r"sun[- ]?(drenched|filled|lit|soaked)|\bsunny\b|\bsunlight\b|southern exposure"),
+    ("bright", r"\bbright\b|light[- ]filled|natural light|tons of light|flooded with light|\bairy\b"),
+    ("well_maintained", r"well[- ]maintained|well[- ]kept"),
+    ("unit_condition", r"\brenovated\b|pristine|immaculate|meticulous|mint condition|newly updated|brand[- ]new"),
     ("quiet", r"\bquiet\b|peaceful|tranquil|serene"),
-    ("pest_free", r"pest[- ]free|no pests|\bclean building\b|spotless"),
-    ("responsive_management", r"responsive (management|landlord|super)|great landlord|attentive|on-?site super|live-?in super|professionally managed"),
-    ("heat_included", r"heat (and hot water )?included|heat included|\bwarm\b|toasty"),
-    ("safe", r"\bsafe\b|great block|secure|safe block|family[- ]friendly"),
-    ("near_subway", r"near (the )?(subway|train)|steps (from|to) (the )?(subway|train)|close to (the )?(subway|train)|convenient|commuter"),
+    ("pest_free", r"pest[- ]free|no pests|vermin[- ]free|no (bed ?bugs|roaches|mice)"),
+    ("responsive_management", r"responsive (management|landlord|super)|great landlord|attentive (management|landlord)|professionally managed"),
+    ("heat_included", r"heat (and hot water )?included|heat & hot water included|utilities included"),
+    ("warm_in_winter", r"\bwarm\b|toasty|great heat|plenty of heat"),
+    ("safe", r"\bsafe\b|great block|safe block"),
+    ("near_subway", r"near (the )?(subway|train)|steps (from|to) (the )?(subway|train)|close to (the )?(subway|train)|blocks? (from|to) (the )?(subway|train)"),
 ]
 
 ADDRESS_IN_TEXT = re.compile(
@@ -838,7 +841,9 @@ FLOOR_IN_TEXT = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)[- ]floor\b|\bfloor\s+(\d
                            r"sixth|seventh|eighth|ninth|tenth)[- ]floor\b", re.IGNORECASE)
 WORD_NUMBERS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
                 "ninth": 9, "tenth": 10}
-SUPPORTED, NOT_SUPPORTED, CANT_VERIFY = "supported", "not supported by city records", "can't verify"
+SUPPORTED, PARTLY, NOT_SUPPORTED, CANT_VERIFY = ("supported", "partly supported", "not supported by city records",
+                                                 "can't verify")
+VERDICTS = (SUPPORTED, PARTLY, NOT_SUPPORTED, CANT_VERIFY)
 
 
 def floor_from_text(text: str) -> int | None:
@@ -864,7 +869,7 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
             cache[name] = fn(state=state, **kwargs)
         return cache[name]
 
-    if claim == "sunny":
+    if claim in ("sunny", "bright"):
         if floor is None:
             return {"verdict": CANT_VERIFY, "evidence": "The listing doesn't say which floor; sunlight depends on it.",
                     "source_tool": "estimate_sunlight"}
@@ -881,20 +886,35 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
             verdict = NOT_SUPPORTED
         else:
             verdict = CANT_VERIFY
+        caveat = "It depends on which way the apartment's windows face: ask the broker. " if verdict == CANT_VERIFY else ""
+        if claim == "bright":
+            # Brightness includes reflected and diffuse light, which we don't model: direct
+            # sun can support the claim but never refute it.
+            if verdict == SUPPORTED:
+                verdict = PARTLY
+            elif verdict == NOT_SUPPORTED:
+                verdict = CANT_VERIFY
+            caveat += ("'Bright' includes reflected light, which isn't modeled, so direct sun is only part of "
+                       "the answer. ")
         return {"verdict": verdict, "source_tool": "estimate_sunlight",
-                "evidence": (f"Floor {floor}, direct sun today by side: {per_side}. "
-                             + ("It depends on which way the apartment's windows face: ask the broker. "
-                                if verdict == CANT_VERIFY else "")
-                             + "(Supported = street side or every side 3+ h today; not supported = every side "
-                               "under 1.5 h. Reflected light isn't counted.)")}
+                "evidence": (f"Floor {floor}, direct sun today by side: {per_side}. " + caveat +
+                             "(Direct-sun rule: street side or every side 3+ h today = supported; every side "
+                             "under 1.5 h = not supported.)")}
 
-    if claim == "well_maintained":
+    if claim in ("well_maintained", "unit_condition"):
         m = run("check_maintenance_record", check_maintenance_record)
         hazardous = m["open_by_class"]["B"]["count"] + m["open_by_class"]["C"]["count"]
         longest = m["days_open"]["longest"] or 0
-        evidence = (f"{m['open_violations']} open HPD violations ({m['open_per_apartment']} per apartment), "
-                    f"{hazardous} hazardous (B/C)" + (f"; the oldest has been open {longest} days." if longest else "."))
-        if m["open_by_class"]["C"]["count"] or longest > 365:
+        evidence = (f"{m['open_violations']} open HPD violations in the building ({m['open_per_apartment']} per "
+                    f"apartment), {hazardous} hazardous (B/C)" + (f"; the oldest has been open {longest} days." if longest else "."))
+        bad = m["open_by_class"]["C"]["count"] or longest > 365
+        if claim == "unit_condition":
+            # 'Pristine' or 'renovated' describes the unit; building records can only partly support it.
+            evidence += (" City records describe the building, not this unit's finishes, so a clean record is "
+                         "partial support at best. Ask to see the unit and when it was renovated.")
+            verdict = PARTLY if hazardous == 0 else CANT_VERIFY
+            return {"verdict": verdict, "evidence": evidence, "source_tool": "check_maintenance_record"}
+        if bad:
             return {"verdict": NOT_SUPPORTED, "evidence": evidence, "source_tool": "check_maintenance_record"}
         return {"verdict": SUPPORTED if hazardous == 0 else CANT_VERIFY, "evidence": evidence,
                 "source_tool": "check_maintenance_record"}
@@ -904,8 +924,9 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
         total = sum(noise.values())
         evidence = (f"{total} 311 noise complaints at this address in the last 12 months"
                     + (f" ({', '.join(f'{k}: {v}' for k, v in noise.items())})" if noise else "")
-                    + ". (Under 3 = supported, 12+ = not supported.)")
-        verdict = SUPPORTED if total < 3 else NOT_SUPPORTED if total >= 12 else CANT_VERIFY
+                    + ". Few complaints means few people called 311, not that it's quiet, so that's partial "
+                      "support at best. (Under 3 = partly supported, 12+ = not supported.)")
+        verdict = PARTLY if total < 3 else NOT_SUPPORTED if total >= 12 else CANT_VERIFY
         return {"verdict": verdict, "evidence": evidence, "source_tool": "311 noise complaints"}
 
     if claim == "pest_free":
@@ -941,14 +962,21 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
             verdict = CANT_VERIFY
         return {"verdict": verdict, "evidence": evidence, "source_tool": "check_maintenance_record"}
 
-    if claim == "heat_included":
+    if claim in ("heat_included", "warm_in_winter"):
         n = run("get_neighborhood_context", get_neighborhood_context)
         heat = n["heat_complaints_per_100_apartments_since_2023"]
-        evidence = (f"{heat['this_building']} heat/hot-water complaints per 100 apartments since 2023 vs {heat['area']} "
-                    "for nearby rentals. (Heat being included in rent is a lease term; this checks whether tenants "
-                    "report going without it.)")
-        verdict = NOT_SUPPORTED if heat["this_building"] > (heat["area"] or 0) else SUPPORTED
-        return {"verdict": verdict, "evidence": evidence, "source_tool": "get_neighborhood_context"}
+        record = (f"Heat/hot-water complaints since 2023: {heat['this_building']} per 100 apartments here vs "
+                  f"{heat['area']} for nearby rentals.")
+        if claim == "heat_included":
+            # Who pays for heat is a billing term, not how well the heat works.
+            return {"verdict": CANT_VERIFY, "source_tool": None,
+                    "evidence": "That's a lease term (who pays for heat); check that it's written into the lease.",
+                    "context": record + " That's about whether the heat works, not who pays for it.",
+                    "context_source_tool": "get_neighborhood_context"}
+        verdict = NOT_SUPPORTED if heat["this_building"] > (heat["area"] or 0) else PARTLY
+        return {"verdict": verdict, "source_tool": "get_neighborhood_context",
+                "evidence": record + (" Fewer complaints than the area is partial support: not every cold "
+                                      "apartment gets reported." if verdict == PARTLY else "")}
 
     if claim == "safe":
         if "night_walk_check" in TOOL_MAP:
@@ -1017,14 +1045,14 @@ def fact_check_listing(state: dict, listing_text: str, floor=None) -> dict:
 
     if not claims:
         return {"address": b.label, "claims": [],
-                "note": "No checkable claims found (looked for sun/light, maintenance, quiet, pests, management, heat, "
-                        "safety and subway phrases)."}
+                "note": "No checkable claims found (looked for sun/light, maintenance and condition, quiet, pests, "
+                        "management, heat, safety and subway phrases)."}
     return {
         "address": b.label,
         "address_source": "found in the listing" if found_address else "the building already being discussed",
         "floor_checked": floor,
         "claims": claims,
-        "summary": {v: sum(c["verdict"] == v for c in claims) for v in (SUPPORTED, NOT_SUPPORTED, CANT_VERIFY)},
+        "summary": {v: sum(c["verdict"] == v for c in claims) for v in VERDICTS},
         "note": ("Verdicts compare listing language with city records using the thresholds stated in each evidence "
                  "line. 'Not supported by city records' means the records point the other way, not that anyone lied."),
     }
@@ -1193,10 +1221,10 @@ TOOLS = [
             "name": "fact_check_listing",
             "description": (
                 "Check a rental listing's claims against city records. Pass the listing text the user pasted; it "
-                "finds the address (or uses the building being discussed) and checks phrases like 'sun-drenched', "
-                "'well-maintained', 'quiet', 'pest-free', 'responsive management', 'heat included' and 'near the "
-                "subway', returning supported / not supported by city records / can't verify for each, with "
-                "evidence. Use whenever the user pastes listing text or quotes a listing's claims."),
+                "finds the address (or uses the building being discussed) and checks phrases about sun and light, "
+                "maintenance and unit condition, quiet, pests, management, heat and the subway, returning "
+                "supported / partly supported / not supported by city records / can't verify for each, with the "
+                "evidence and the rule used. Use whenever the user pastes listing text or quotes a listing's claims."),
             "parameters": {
                 "type": "object",
                 "properties": {
