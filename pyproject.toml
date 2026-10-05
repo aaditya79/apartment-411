@@ -11,4 +11,6 @@ dependencies = [
     "requests>=2.31",
     "cachetools>=7.2.1",
     "numpy>=2.2.6",
+    "pypdf>=6.19.0",
+    "python-multipart>=0.0.32",
 ]

@@ -19,6 +19,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 
+import lease
 import nyc
 import sun
 from nyc import AddressError, DataSourceError
@@ -1058,6 +1059,137 @@ def fact_check_listing(state: dict, listing_text: str, floor=None) -> dict:
     }
 
 
+# --- Tool 13 ---
+
+LEASE_NOTE = ("This is a checklist, not legal advice. Raise flags as questions with the landlord. For disputes: "
+              "311, Met Council on Housing (https://www.metcouncilonhousing.org/), or a tenant attorney.")
+CORPORATE_WORDS = {"llc", "inc", "corp", "corporation", "co", "company", "the", "lp", "ltd", "realty", "management",
+                   "mgmt", "associates", "assoc", "group", "holdings", "by", "its", "managing", "member"}
+
+
+def name_tokens(name: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in CORPORATE_WORDS}
+
+
+def same_party(lease_name: str, registered: list[str]) -> bool:
+    """Does the lease's landlord name match any registered owner/officer/agent?"""
+    mine = name_tokens(lease_name)
+    for other in registered:
+        theirs = name_tokens(other)
+        if mine and theirs and len(mine & theirs) / len(mine | theirs) >= 0.5:
+            return True
+    return False
+
+
+def unit_floor(unit: str | None) -> int | None:
+    """'4B' -> 4, '12F' -> 12, '1203' -> 12; None when the unit isn't numbered by floor."""
+    if not unit:
+        return None
+    m = re.match(r"^(\d{1,4})[A-Z]{0,2}$", unit)
+    if not m:
+        return None
+    digits = m.group(1)
+    return int(digits) if len(digits) <= 2 else int(digits[:-2])
+
+
+def check_against_records(facts: dict, b: nyc.Building, state: dict) -> tuple[list[dict], dict]:
+    flags, context = [], {}
+    contacts = b.contacts_by_role()
+    registered = [c["name"] for people in contacts.values() for c in people] + ([b.owner_name] if b.owner_name else [])
+    if facts["landlord_name"] and registered and not same_party(facts["landlord_name"], registered):
+        owner = (contacts.get("owner_company") or contacts.get("owner_person") or [{"name": b.owner_name}])[0]["name"]
+        agent = (contacts.get("managing_agent") or [{}])[0].get("name")
+        flags.append(lease.flag(lease.CHECK, f"Landlord: {facts['landlord_name']}",
+                                f"The lease names '{facts['landlord_name']}' as landlord, but HPD's registration lists "
+                                f"the owner as '{owner}'" + (f" and the managing agent as '{agent}'" if agent else "") +
+                                ". It could be a legitimate agent or affiliate: ask how they're related to the "
+                                "registered owner, and who to contact for repairs.", category="city_records"))
+        context["registered_owner"] = owner
+
+    floor = unit_floor(facts["unit"])
+    if floor and b.floors and floor > b.floors:
+        flags.append(lease.flag(lease.INCONSISTENT, f"Apartment {facts['unit']}",
+                                f"Apartment {facts['unit']} suggests floor {floor}, but city records show "
+                                f"{b.floors} floors. Confirm the apartment number and floor.", category="city_records"))
+
+    pests = check_pests(state=state)
+    filings = pests["bedbug_filings"] if isinstance(pests["bedbug_filings"], list) else []
+    if not facts["disclosures_present"]["bedbug_history"] and any(f["infested_units"] for f in filings):
+        latest = next(f for f in filings if f["infested_units"])
+        flags.append(lease.flag(lease.CHECK, None,
+                                f"No bedbug disclosure in the lease, and the owner's {latest['filed']} filing reported "
+                                f"{latest['infested_units']} infested apartment(s). For a new lease, ask for the "
+                                "bedbug history form.", "bedbug_disclosure"))
+    context["bedbug_filings"] = filings[:2]
+
+    if facts["heat_included"]:
+        heat = get_tenant_complaints(state=state, category="heat_hot_water")
+        context["heat_complaints_since_2023"] = {
+            "count": heat["matching_complaints"], "by_month": heat["by_month"]["counts"] if heat["by_month"] else {},
+            "meaning": "The lease covers heat; these complaints show whether tenants reported going without it."}
+
+    if facts["unit"]:
+        in_unit = [v for v in fetch_open_violations(b) if (v.get("apartment") or "").upper() == facts["unit"]]
+        hazardous = [v for v in in_unit if v.get("class") == "C"]
+        if hazardous:
+            flags.append(lease.flag(lease.CHECK, f"Apartment {facts['unit']}",
+                                    f"Apartment {facts['unit']} has {len(hazardous)} open class C (immediately hazardous) "
+                                    "violation(s) in HPD records: " + "; ".join(
+                                        split_violation_text(v.get("novdescription"))["what"][:90] for v in hazardous[:3])
+                                    + ". Ask for them to be fixed before you move in.", category="city_records"))
+        context["open_violations_in_unit"] = len(in_unit)
+    return flags, context
+
+
+LEASE_FOCUS = {"all", "money", "terms", "disclosures", "city_records"}
+
+
+def review_lease(state: dict, focus: str = "all") -> dict:
+    text = state.get("lease_text")
+    if not text:
+        raise ToolError("No lease has been shared in this conversation.",
+                        "Ask the user to upload the lease (PDF or .txt, paperclip button) or paste its text, or to "
+                        "try the sample lease.")
+    if focus not in LEASE_FOCUS:
+        raise ToolError(f"Unknown focus '{focus}'.", "Use one of: all, money, terms, disclosures, city_records.")
+
+    facts = lease.extract(text)
+    flags = lease.check_consistency(facts) + lease.check_rules(facts)
+
+    # The building: the address in the lease if there is one, else the one being discussed.
+    m = ADDRESS_IN_TEXT.search(text)
+    b, context, building_note = None, {}, None
+    try:
+        b = current_building(m.group(1).strip(" ,.") if m else None, state)
+    except ToolError as e:
+        building_note = f"City-record checks skipped: {e.error}"
+    if b:
+        try:
+            record_flags, context = check_against_records(facts, b, state)
+            flags += record_flags
+        except DataSourceError:
+            building_note = "City-record checks skipped: NYC Open Data didn't respond."
+
+    if focus != "all":
+        flags = [f for f in flags if f["category"] == focus]
+    order = {lease.LIKELY_NOT_ALLOWED: 0, lease.INCONSISTENT: 1, lease.CHECK: 2}
+    flags.sort(key=lambda f: order[f["severity"]])
+
+    extracted = {k: v for k, v in facts.items() if k not in ("heat_clauses", "rent_mentions", "disclosures_present")}
+    extracted["rents_stated"] = [m["amount"] for m in facts["rent_mentions"]]
+    return {
+        "address": b.label if b else None,
+        "is_sample": text.lstrip().startswith("*** FICTIONAL SAMPLE LEASE"),
+        "flag_counts": {sev: sum(f["severity"] == sev for f in flags) for sev in order},
+        "flags": flags,
+        "missing_disclosures": lease.missing_disclosures(facts, b.units if b else None, b.year_built if b else None),
+        "extracted": extracted,
+        "city_record_context": context,
+        **({"building_note": building_note} if building_note else {}),
+        "note": LEASE_NOTE,
+    }
+
+
 # --- What the model sees ---
 
 ADDRESS_ARG = {
@@ -1236,6 +1368,27 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_lease",
+            "description": (
+                "Review the lease the user uploaded or pasted (it's already stored; don't pass the text). Extracts "
+                "rent, deposit, dates, fees and clauses; flags internal inconsistencies, terms that are likely not "
+                "allowed under NY/NYC law (deposit cap, late and application fees, broker fees, attorney's fees, "
+                "heat), missing required disclosures, and mismatches with city records for the building (registered "
+                "owner, floors, bedbug filings, violations in the unit). Each flag quotes the clause and links the "
+                "official rule. Use when the user mentions their lease or asks to review one."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "focus": {"type": "string", "enum": ["all", "money", "terms", "disclosures", "city_records"],
+                              "description": ("Limit flags to 'money' (rent, deposit, fees), 'terms', 'disclosures' "
+                                              "or 'city_records' (owner, floors, violations). Default 'all'.")},
+                },
+            },
+        },
+    },
 ]
 
 # What the harness runs: tool name -> Python function.
@@ -1250,6 +1403,7 @@ TOOL_MAP = {
     "draft_repair_request": draft_repair_request,
     "estimate_sunlight": estimate_sunlight,
     "fact_check_listing": fact_check_listing,
+    "review_lease": review_lease,
 }
 
 
