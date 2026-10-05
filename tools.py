@@ -12,6 +12,7 @@ Run `uv run python -m tools "184 Claremont Ave, Manhattan"` to try every tool.
 """
 
 import json
+import math
 import re
 import statistics
 from collections import Counter
@@ -19,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 
 import nyc
+import sun
 from nyc import AddressError, DataSourceError
 
 # --- Shared plumbing ---
@@ -678,6 +680,356 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
     }
 
 
+# --- Tool 9 ---
+
+SUN_NOTE = ("Direct sun only. Rooms can still be bright from light reflected off buildings across the street. "
+            "Not modeled: trees, fire escapes, window recesses, buildings newer than the footprint data. Ranges "
+            "come from 12 runs varying floor height, window position along the wall and neighbors' heights "
+            "(a sensitivity analysis, not a confidence interval).")
+COMPASS_BEARINGS = {"north": 0, "northeast": 45, "east": 90, "southeast": 135, "south": 180, "southwest": 225,
+                    "west": 270, "northwest": 315}
+_sites: dict[str, sun.Site] = {}
+
+
+def site_for(b: nyc.Building) -> sun.Site:
+    if b.bbl not in _sites:  # footprints don't change during a session; keep the parsed geometry
+        _sites[b.bbl] = sun.Site(b)
+    return _sites[b.bbl]
+
+
+def street_name(b: nyc.Building) -> str:
+    """'184 Claremont Avenue' -> 'Claremont Avenue'."""
+    first = b.label.split(",")[0]
+    return first.split(" ", 1)[1] if first[:1].isdigit() and " " in first else first
+
+
+def building_floors(b: nyc.Building, site: sun.Site) -> int:
+    return b.floors or max(1, round(site.target["height_ft"] / 10.5))
+
+
+def blocker_info(site: sun.Site, index: int, side: dict) -> dict:
+    """The building that most often blocks the sun: where it is and how tall."""
+    blk = site.buildings[index]
+    points = [p for ring in blk["rings"] for p in ring]
+    cx, cy = sum(x for x, _ in points) / len(points), sum(y for _, y in points) / len(points)
+    a, c = side["start"], side["end"]
+    wx, wy = (a[0] + c[0]) / 2, (a[1] + c[1]) / 2
+    bearing = math.degrees(math.atan2(cx - wx, cy - wy)) % 360
+    address = None
+    if blk.get("bbl"):
+        try:
+            rows = nyc.soda(nyc.PLUTO, **{"$select": "address", "$where": f"bbl={int(float(blk['bbl']))}", "$limit": 1})
+            address = (rows[0].get("address") or "").title() or None if rows else None
+        except DataSourceError:
+            pass  # the address is a nice-to-have; the height and direction still tell the story
+    lon, lat = site.to_lonlat(cx, cy)
+    return {"address": address, "height_ft": round(blk["height_ft"]), "distance_m": round(math.dist((wx, wy), (cx, cy))),
+            "direction": sun.compass(bearing), "lat": round(lat, 6), "lon": round(lon, 6)}
+
+
+def side_geometry(site: sun.Site, side: dict) -> list[list[float]]:
+    return [[round(v, 6) for v in site.to_lonlat(*p)[::-1]] for p in (side["start"], side["end"])]
+
+
+def pick_sides(sides: list[dict], wanted: str) -> list[dict]:
+    windows = [s for s in sides if s["kind"] != "shared_wall"]
+    if wanted == "all":
+        return windows
+    if wanted in COMPASS_BEARINGS:
+        target = COMPASS_BEARINGS[wanted]
+        best = min(windows, key=lambda s: abs((s["bearing"] - target + 180) % 360 - 180), default=None)
+        return [best] if best and abs((best["bearing"] - target + 180) % 360 - 180) <= 45 else []
+    return [s for s in windows if s["kind"] == wanted]
+
+
+def sweep_summary(rows: list[tuple[int, float]]) -> str:
+    """[(2, 0.0), (3, 0.0), (5, 1.0)] -> '0h floors 2-3, ~1h floor 5'."""
+    parts, i = [], 0
+    while i < len(rows):
+        j = i
+        while j + 1 < len(rows) and rows[j + 1][1] == rows[i][1]:
+            j += 1
+        floors = f"floor {rows[i][0]}" if i == j else f"floors {rows[i][0]}-{rows[j][0]}"
+        hours = "0h" if rows[i][1] == 0 else f"~{rows[i][1]:g}h"
+        parts.append(f"{hours} {floors}")
+        i = j + 1
+    return ", ".join(parts)
+
+
+def estimate_sunlight(state: dict, floor, side: str = "all", address: str | None = None) -> dict:
+    b = current_building(address, state)
+    site = site_for(b)
+    sides = site.facades(street_name(b))
+    top_floor = building_floors(b, site)
+    dates = sun.season_dates(date.today())
+
+    if str(floor).strip().lower() == "all":
+        street = next((s for s in sides if s["kind"] == "street"), None)
+        if street is None:
+            raise ToolError("Couldn't identify the street side of this building's footprint.",
+                            "Ask the user which direction their windows face (e.g. west), then call with that side and a floor number.")
+        winter, today = [], []
+        for f in range(1, top_floor + 1):
+            winter.append((f, round(2 * sun.ensemble(site, street, f, dates["winter (Dec 21)"])["hours"]) / 2))
+            today.append((f, round(2 * sun.ensemble(site, street, f, dates["today"])["hours"]) / 2))
+        return {
+            "address": b.label, "side": street["label"], "floors": top_floor,
+            "winter_sun_by_floor": sweep_summary(winter), "today_sun_by_floor": sweep_summary(today),
+            "lowest_floor_with_1h_winter_sun": next((f for f, h in winter if h >= 1), None),
+            "note": "Hours rounded to the nearest half hour (median of 12 runs). " + SUN_NOTE,
+        }
+
+    try:
+        floor = int(floor)
+    except (TypeError, ValueError):
+        raise ToolError(f"Floor '{floor}' isn't a number.", "Pass the floor as a number like '4', or 'all' for every floor.")
+    if not 1 <= floor <= top_floor:
+        raise ToolError(f"{b.label} has {top_floor} floors in city records, so floor {floor} doesn't exist.",
+                        f"Ask the user which floor (1-{top_floor}) their apartment is on.")
+
+    chosen = pick_sides(sides, side)
+    if not chosen:
+        available = sorted({s["kind"] for s in sides if s["kind"] != "shared_wall"} | {s["direction"] for s in sides})
+        raise ToolError(f"This building has no '{side}' side with windows in the footprint data.",
+                        f"Use one of: all, {', '.join(available)}.")
+
+    results = []
+    for s in chosen:
+        seasons = {name: sun.ensemble(site, s, floor, day) for name, day in dates.items()}
+        entry = {"side": s["label"], "facing_degrees": round(s["bearing"]),
+                 "sun": {name: sun.describe(r) for name, r in seasons.items()},
+                 "hours_median_min_max": {name: [r["hours"], *r["range"]] for name, r in seasons.items()},
+                 "wall_lat_lon": side_geometry(site, s)}
+        today_blocker = seasons["today"].get("main_blocker")
+        if today_blocker and today_blocker["hours_blocked"] >= 0.5:
+            entry["main_blocker_today"] = {**blocker_info(site, today_blocker["index"], s),
+                                           "hours_blocked": today_blocker["hours_blocked"]}
+        results.append(entry)
+    results.sort(key=lambda e: -e["hours_median_min_max"]["today"][0])
+    return {
+        "address": b.label, "floor": floor, "floors_in_building": top_floor,
+        "dates": {name: d.isoformat() for name, d in dates.items()},
+        "sides": results,
+        "note": SUN_NOTE,
+    }
+
+
+# --- Tool 10 ---
+
+# Listing phrases -> the claim they make and how we check it. No LLM inside the tool:
+# a keyword map keeps the check reproducible and the evidence traceable.
+LISTING_CLAIMS = [
+    ("sunny", r"sun[- ]?(drenched|filled|lit|soaked)|\bsunny\b|\bsunlight\b|bright|light[- ]filled|natural light|tons of light|flooded with light"),
+    ("well_maintained", r"well[- ]maintained|well[- ]kept|\brenovated\b|pristine|immaculate|meticulous|mint condition|newly updated"),
+    ("quiet", r"\bquiet\b|peaceful|tranquil|serene"),
+    ("pest_free", r"pest[- ]free|no pests|\bclean building\b|spotless"),
+    ("responsive_management", r"responsive (management|landlord|super)|great landlord|attentive|on-?site super|live-?in super|professionally managed"),
+    ("heat_included", r"heat (and hot water )?included|heat included|\bwarm\b|toasty"),
+    ("safe", r"\bsafe\b|great block|secure|safe block|family[- ]friendly"),
+    ("near_subway", r"near (the )?(subway|train)|steps (from|to) (the )?(subway|train)|close to (the )?(subway|train)|convenient|commuter"),
+]
+
+ADDRESS_IN_TEXT = re.compile(
+    r"\b(\d{1,5}(?:-\d{1,4})?\s+(?:(?:east|west|e\.?|w\.?|north|south)\s+)?[a-z0-9.' ]{2,40}?\s"
+    r"(?:avenue|ave|street|st|boulevard|blvd|place|pl|road|rd|drive|dr|parkway|pkwy|terrace|ter|lane|ln|court|ct)\b\.?"
+    r"(?:,?\s*(?:apt\.?|apartment|unit|#)\s*\w+)?(?:,?\s*(?:manhattan|brooklyn|queens|bronx|the bronx|staten island|new york|ny))?)",
+    re.IGNORECASE)
+FLOOR_IN_TEXT = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)[- ]floor\b|\bfloor\s+(\d{1,2})\b|\b(first|second|third|fourth|fifth|"
+                           r"sixth|seventh|eighth|ninth|tenth)[- ]floor\b", re.IGNORECASE)
+WORD_NUMBERS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+                "ninth": 9, "tenth": 10}
+SUPPORTED, NOT_SUPPORTED, CANT_VERIFY = "supported", "not supported by city records", "can't verify"
+
+
+def floor_from_text(text: str) -> int | None:
+    m = FLOOR_IN_TEXT.search(text)
+    if not m:
+        return None
+    return int(m.group(1) or m.group(2)) if (m.group(1) or m.group(2)) else WORD_NUMBERS[m.group(3).lower()]
+
+
+def noise_complaints(b: nyc.Building) -> dict:
+    """311 noise complaints geocoded to this lot in the last 12 months."""
+    since = date.today().replace(year=date.today().year - 1).isoformat()
+    rows = nyc.soda(nyc.NOISE_311, **{"$select": "complaint_type, count(*) as n",
+                                      "$where": f"bbl='{b.bbl}' AND created_date >= '{since}' AND complaint_type like 'Noise%'",
+                                      "$group": "complaint_type"})
+    return {r["complaint_type"]: int(r["n"]) for r in rows}
+
+
+def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cache: dict) -> dict:
+    """One listing claim -> verdict, evidence, and which tool the evidence came from."""
+    def run(name: str, fn, **kwargs):
+        if name not in cache:
+            cache[name] = fn(state=state, **kwargs)
+        return cache[name]
+
+    if claim == "sunny":
+        if floor is None:
+            return {"verdict": CANT_VERIFY, "evidence": "The listing doesn't say which floor; sunlight depends on it.",
+                    "source_tool": "estimate_sunlight"}
+        r = run("estimate_sunlight", estimate_sunlight, floor=floor)
+        today = {s["side"]: s["hours_median_min_max"]["today"][0] for s in r["sides"]}
+        street = next((s for s in r["sides"] if s["side"].startswith("street")), None)
+        shown = ([street] if street else []) + [s for s in r["sides"] if s is not street][:2]
+        per_side = "; ".join(f"{s['side']}: {s['sun']['today']}" for s in shown)
+        # We don't know which way the apartment faces: only call it when every
+        # window side agrees, or when the street side alone is clearly sunny.
+        if street and street["hours_median_min_max"]["today"][0] >= 3 or min(today.values()) >= 3:
+            verdict = SUPPORTED
+        elif max(today.values()) < 1.5:
+            verdict = NOT_SUPPORTED
+        else:
+            verdict = CANT_VERIFY
+        return {"verdict": verdict, "source_tool": "estimate_sunlight",
+                "evidence": (f"Floor {floor}, direct sun today by side: {per_side}. "
+                             + ("It depends on which way the apartment's windows face: ask the broker. "
+                                if verdict == CANT_VERIFY else "")
+                             + "(Supported = street side or every side 3+ h today; not supported = every side "
+                               "under 1.5 h. Reflected light isn't counted.)")}
+
+    if claim == "well_maintained":
+        m = run("check_maintenance_record", check_maintenance_record)
+        hazardous = m["open_by_class"]["B"]["count"] + m["open_by_class"]["C"]["count"]
+        longest = m["days_open"]["longest"] or 0
+        evidence = (f"{m['open_violations']} open HPD violations ({m['open_per_apartment']} per apartment), "
+                    f"{hazardous} hazardous (B/C)" + (f"; the oldest has been open {longest} days." if longest else "."))
+        if m["open_by_class"]["C"]["count"] or longest > 365:
+            return {"verdict": NOT_SUPPORTED, "evidence": evidence, "source_tool": "check_maintenance_record"}
+        return {"verdict": SUPPORTED if hazardous == 0 else CANT_VERIFY, "evidence": evidence,
+                "source_tool": "check_maintenance_record"}
+
+    if claim == "quiet":
+        noise = cache.setdefault("noise", noise_complaints(b))
+        total = sum(noise.values())
+        evidence = (f"{total} 311 noise complaints at this address in the last 12 months"
+                    + (f" ({', '.join(f'{k}: {v}' for k, v in noise.items())})" if noise else "")
+                    + ". (Under 3 = supported, 12+ = not supported.)")
+        verdict = SUPPORTED if total < 3 else NOT_SUPPORTED if total >= 12 else CANT_VERIFY
+        return {"verdict": verdict, "evidence": evidence, "source_tool": "311 noise complaints"}
+
+    if claim == "pest_free":
+        p = run("check_pests", check_pests)
+        rats = p["rodent_inspections_since_2023"]
+        filings = p["bedbug_filings"] if isinstance(p["bedbug_filings"], list) else []
+        infested = filings[0]["infested_units"] if filings else 0
+        evidence = (f"{rats['failed_for_rats']} of {rats['inspections']} rat inspections since 2023 failed"
+                    + (f" (last {rats['last_failed']})" if rats["last_failed"] else "")
+                    + (f"; latest bedbug filing ({filings[0]['filed']}): {infested} infested units, "
+                       f"{filings[0]['eradicated_units']} eradicated." if filings else "; no bedbug filings on record."))
+        verdict = NOT_SUPPORTED if rats["failed_for_rats"] or infested else SUPPORTED if rats["inspections"] else CANT_VERIFY
+        return {"verdict": verdict, "evidence": evidence, "source_tool": "check_pests"}
+
+    if claim == "responsive_management":
+        m = run("check_maintenance_record", check_maintenance_record)
+        median_open = m["days_open"]["median"]
+        fixed = m["fixed_since_2023"]
+        if not m["open_violations"] and not fixed["count"]:
+            return {"verdict": CANT_VERIFY, "source_tool": "check_maintenance_record",
+                    "evidence": "No open violations and none issued since 2023, so there's no repair record to "
+                                "measure responsiveness by (a good sign in itself)."}
+        evidence = (f"{m['open_violations']} open violations" +
+                    (f", open a median of {median_open:g} days" if median_open is not None else "") +
+                    (f"; {fixed['count']} violations since 2023 took a median of {fixed['median_days_to_close']:g} "
+                     "days to close" if fixed["count"] else "; none closed since 2023") +
+                    ". (Median open over 180 days = not supported; 60 or less = supported.)")
+        if median_open is not None and median_open > 180:
+            verdict = NOT_SUPPORTED
+        elif (median_open is None or median_open <= 60) and (fixed["median_days_to_close"] or 0) <= 60:
+            verdict = SUPPORTED
+        else:
+            verdict = CANT_VERIFY
+        return {"verdict": verdict, "evidence": evidence, "source_tool": "check_maintenance_record"}
+
+    if claim == "heat_included":
+        n = run("get_neighborhood_context", get_neighborhood_context)
+        heat = n["heat_complaints_per_100_apartments_since_2023"]
+        evidence = (f"{heat['this_building']} heat/hot-water complaints per 100 apartments since 2023 vs {heat['area']} "
+                    "for nearby rentals. (Heat being included in rent is a lease term; this checks whether tenants "
+                    "report going without it.)")
+        verdict = NOT_SUPPORTED if heat["this_building"] > (heat["area"] or 0) else SUPPORTED
+        return {"verdict": verdict, "evidence": evidence, "source_tool": "get_neighborhood_context"}
+
+    if claim == "safe":
+        if "night_walk_check" in TOOL_MAP:
+            r = run("night_walk_check", TOOL_MAP["night_walk_check"])
+            return {"verdict": CANT_VERIFY, "evidence": r.get("summary", ""), "source_tool": "night_walk_check"}
+        return {"verdict": CANT_VERIFY, "evidence": "Safety claims aren't checked yet.", "source_tool": None}
+
+    if claim == "near_subway":
+        snap = nyc.load_snapshot()
+        nearest = min(snap.get("stations", []), default=None,
+                      key=lambda st: nyc.miles_between(b.lat, b.lon, st["lat"], st["lon"]))
+        if not nearest:
+            return {"verdict": CANT_VERIFY, "evidence": "Station data unavailable.", "source_tool": None}
+        miles = nyc.miles_between(b.lat, b.lon, nearest["lat"], nearest["lon"])
+        minutes = round(miles * 1609 * 1.3 / 80)
+        verdict = SUPPORTED if minutes <= 10 else NOT_SUPPORTED if minutes > 15 else CANT_VERIFY
+        return {"verdict": verdict, "source_tool": "subway stations",
+                "evidence": (f"Nearest station: {nearest['name']} ({' '.join(nearest['routes'])}), about {minutes} min "
+                             "walk (straight line x 1.3 at 80 m/min). (10 min or less = supported.)")}
+
+    return {"verdict": CANT_VERIFY, "evidence": "No city record covers this claim.", "source_tool": None}
+
+
+def fact_check_listing(state: dict, listing_text: str, floor=None) -> dict:
+    text = (listing_text or "").strip()
+    if len(text) < 10:
+        raise ToolError("The listing text is empty or too short.", "Ask the user to paste the listing description.")
+
+    m = ADDRESS_IN_TEXT.search(text)
+    found_address = m.group(1).strip(" ,.") if m else None
+    if found_address:
+        try:
+            b = current_building(found_address, state)
+        except ToolError:
+            if not state.get("current_bbl"):
+                raise ToolError(f"Couldn't look up the address in the listing ('{found_address}').",
+                                "Ask the user for the building's full address with borough.")
+            b = current_building(None, state)
+            found_address = None
+    else:
+        b = current_building(None, state)  # raises NO_BUILDING if nothing is selected yet
+
+    floor = floor if floor not in (None, "") else floor_from_text(text)
+    floor = int(floor) if floor is not None and str(floor).isdigit() else None
+
+    found = []
+    for claim, pattern in LISTING_CLAIMS:
+        hit = re.search(pattern, text, re.IGNORECASE)
+        if hit:
+            start = max(0, hit.start() - 40)
+            found.append((claim, ("..." if start else "") + text[start:hit.end() + 40].replace("\n", " ").strip() + "..."))
+
+    def judge(claim: str) -> dict:
+        try:
+            return judge_claim(claim, b, state, floor, cache)
+        except ToolError as e:
+            return {"verdict": CANT_VERIFY, "evidence": e.error, "source_tool": None}
+        except DataSourceError:
+            return {"verdict": CANT_VERIFY, "evidence": "City data didn't respond for this check.", "source_tool": None}
+
+    # Each claim needs different city data; fetch them at once (cold queries take seconds each).
+    cache: dict = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        verdicts = list(pool.map(judge, [claim for claim, _ in found]))
+    claims = [{"claim": claim, "listing_says": quote, **v} for (claim, quote), v in zip(found, verdicts)]
+
+    if not claims:
+        return {"address": b.label, "claims": [],
+                "note": "No checkable claims found (looked for sun/light, maintenance, quiet, pests, management, heat, "
+                        "safety and subway phrases)."}
+    return {
+        "address": b.label,
+        "address_source": "found in the listing" if found_address else "the building already being discussed",
+        "floor_checked": floor,
+        "claims": claims,
+        "summary": {v: sum(c["verdict"] == v for c in claims) for v in (SUPPORTED, NOT_SUPPORTED, CANT_VERIFY)},
+        "note": ("Verdicts compare listing language with city records using the thresholds stated in each evidence "
+                 "line. 'Not supported by city records' means the records point the other way, not that anyone lied."),
+    }
+
+
 # --- What the model sees ---
 
 ADDRESS_ARG = {
@@ -811,6 +1163,51 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "estimate_sunlight",
+            "description": (
+                "How much direct sun does a window get? Ray-traces the sun past every nearby building's real "
+                "height for today, Dec 21, Mar 20 and Jun 21, per side of the building (street side, rear, side, "
+                "light court), with hours, times and an uncertainty range, plus the building that blocks it most. "
+                "floor='all' gives winter and today sun for every floor on the street side ('which floor gets "
+                "winter sun?'). Ask the user for their floor if unknown."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "floor": {"type": "string",
+                              "description": "Apartment floor as a number, e.g. '4', or 'all' for a floor-by-floor sweep."},
+                    "side": {"type": "string", "enum": ["all", "street", "rear", "side", "court", *COMPASS_BEARINGS],
+                             "description": ("Which windows: 'street' (front), 'rear', 'side', 'court', a compass "
+                                             "direction the windows face, or 'all' (default) if the user doesn't know.")},
+                    "address": ADDRESS_ARG,
+                },
+                "required": ["floor"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fact_check_listing",
+            "description": (
+                "Check a rental listing's claims against city records. Pass the listing text the user pasted; it "
+                "finds the address (or uses the building being discussed) and checks phrases like 'sun-drenched', "
+                "'well-maintained', 'quiet', 'pest-free', 'responsive management', 'heat included' and 'near the "
+                "subway', returning supported / not supported by city records / can't verify for each, with "
+                "evidence. Use whenever the user pastes listing text or quotes a listing's claims."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "listing_text": {"type": "string", "description": "The listing description, verbatim."},
+                    "floor": {"type": "string",
+                              "description": "Apartment floor if known and not in the text, e.g. '4' (needed for sunlight claims)."},
+                },
+                "required": ["listing_text"],
+            },
+        },
+    },
 ]
 
 # What the harness runs: tool name -> Python function.
@@ -823,6 +1220,8 @@ TOOL_MAP = {
     "get_landlord_portfolio": get_landlord_portfolio,
     "get_neighborhood_context": get_neighborhood_context,
     "draft_repair_request": draft_repair_request,
+    "estimate_sunlight": estimate_sunlight,
+    "fact_check_listing": fact_check_listing,
 }
 
 
@@ -862,6 +1261,11 @@ if __name__ == "__main__":
         ("get_neighborhood_context", {}),
         ("draft_repair_request", {"issues": ["water_leak", "paint_plaster"], "apartment": "2N",
                                   "details": "the bathroom ceiling has been leaking for months"}),
+        ("estimate_sunlight", {"floor": "4"}),
+        ("estimate_sunlight", {"floor": "all"}),
+        ("fact_check_listing", {"listing_text": "Sun-drenched 4th floor 2BR in a well-maintained building at "
+                                                "184 Claremont Ave, Manhattan. Quiet block, steps to the subway, "
+                                                "heat included, responsive management."}),
     ]
     timings = []
     for name, args in calls:

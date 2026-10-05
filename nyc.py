@@ -47,6 +47,7 @@ CRIME_HISTORIC = "qgea-i56i"   # NYPD complaints, previous years
 SHOOTINGS = "5ucz-vwe8"        # NYPD shootings; most rows have latitude/longitude swapped
 PRECINCTS = "y76i-bdw7"        # police precinct polygons with shape_area
 STATIONS = "39hk-dx4f"         # MTA subway stations (data.ny.gov)
+NOISE_311 = "erm2-nwe9"        # 311 service requests (noise complaints by BBL, ~0.5s)
 
 SINCE = "2023-01-01"  # the window every "recent" count in this app uses
 
