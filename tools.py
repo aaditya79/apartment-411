@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 
 import lease
+import numpy as np
+
 import nyc
 import sun
 from nyc import AddressError, DataSourceError
@@ -1190,6 +1192,198 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     }
 
 
+# --- Tool 11 ---
+
+CORRIDOR_M = 60            # half-width of the walk corridor (NYPD points are offset to intersections)
+WALK_M_PER_MIN = 80        # an easy walking pace
+DETOUR = 1.3               # street grid vs straight line
+NIGHT_WALK_NOTE = ("Reported incidents only, from NYPD complaint and shooting data. NYPD locations are approximate "
+                   "(offset to the nearest intersection), and the route is a straight-line corridor about 60 m wide, "
+                   "not your exact path. Counts describe places and times, not people.")
+_comparison_cache: dict = {}
+
+
+def station_label(st: dict) -> str:
+    return f"{st['name']} ({' '.join(st['routes'])})"
+
+
+def find_station(name: str | None, b: nyc.Building, stations: list[dict]) -> dict:
+    by_distance = sorted(stations, key=lambda st: nyc.miles_between(b.lat, b.lon, st["lat"], st["lon"]))
+    if not name:
+        return by_distance[0]
+
+    def norm(t: str) -> str:
+        t = re.sub(r"\b(street|st)\b", "st", t.lower())
+        t = re.sub(r"\b(\d+)(st|nd|rd|th)\b", r"\1", t)
+        return re.sub(r"[^a-z0-9 ]", " ", t).split() and " ".join(re.sub(r"[^a-z0-9 ]", " ", t).split())
+
+    wanted = norm(name)
+    matches = [st for st in by_distance if wanted in norm(st["name"]) or norm(st["name"]) in wanted]
+    if not matches:
+        raise ToolError(f"No subway station matches '{name}'.",
+                        f"The nearest stations are: {', '.join(station_label(st) for st in by_distance[:3])}. "
+                        "Ask the user which one, or omit station to use the nearest.")
+    return matches[0]  # the nearest station with that name
+
+
+def corridor_mask(points: np.ndarray, start: tuple, end: tuple, origin_lat: float) -> np.ndarray:
+    """Which [lat, lon] points lie within CORRIDOR_M of the start-end segment."""
+    kx, ky = 111320 * math.cos(math.radians(origin_lat)), 110540
+    px, py = (points[:, 1] - start[1]) * kx, (points[:, 0] - start[0]) * ky
+    ex, ey = (end[1] - start[1]) * kx, (end[0] - start[0]) * ky
+    length2 = ex * ex + ey * ey or 1e-9
+    t = np.clip((px * ex + py * ey) / length2, 0, 1)
+    return np.hypot(px - t * ex, py - t * ey) <= CORRIDOR_M
+
+
+def in_window(hour: int, after_hour: int) -> bool:
+    return hour >= after_hour or hour < nyc.NIGHT_END_HOUR
+
+
+def comparable_walks(length_m: float, after_hour: int, near: tuple | None = None) -> list[int]:
+    """Reported night incidents along walks of the same length from every station, in 8 directions:
+    the baseline this walk is compared with (snapshot data, so it's the same for every user)."""
+    key = (round(length_m / 25), after_hour, near)
+    if key in _comparison_cache:
+        return _comparison_cache[key]
+    snap = nyc.load_snapshot()
+    rows = [p for p in snap["street_incidents"] if in_window(p[3], after_hour)]
+    rows += [p for p in snap["shootings"] if in_window(p[3], after_hour)]
+    pts = np.array([[p[0], p[1]] for p in rows])
+    stations = snap["stations"]
+    if near:
+        stations = [st for st in stations if nyc.miles_between(near[0], near[1], st["lat"], st["lon"]) <= 2]
+    counts = []
+    for st in stations:
+        dlat = length_m / 110540
+        dlon = length_m / (111320 * math.cos(math.radians(st["lat"])))
+        close = pts[(np.abs(pts[:, 0] - st["lat"]) < dlat + 0.001) & (np.abs(pts[:, 1] - st["lon"]) < dlon + 0.001)]
+        for bearing in range(0, 360, 45):
+            end = (st["lat"] + dlat * math.cos(math.radians(bearing)), st["lon"] + dlon * math.sin(math.radians(bearing)))
+            counts.append(int(corridor_mask(close, (st["lat"], st["lon"]), end, st["lat"]).sum()) if len(close) else 0)
+    _comparison_cache[key] = counts
+    return counts
+
+
+def live_incidents(start: tuple, end: tuple, window: list[str], after_hour: int) -> list[list]:
+    """Street incidents and shootings in the corridor's bounding box, live from NYPD data."""
+    pad_lat, pad_lon = CORRIDOR_M / 110540, CORRIDOR_M / (111320 * math.cos(math.radians(start[0])))
+    s_, n_ = min(start[0], end[0]) - pad_lat, max(start[0], end[0]) + pad_lat
+    w_, e_ = min(start[1], end[1]) - pad_lon, max(start[1], end[1]) + pad_lon
+    box = f"latitude between {s_} and {n_} AND longitude between {w_} and {e_}"
+    # Only date, time, offense and location are selected: no victim or suspect details ever reach the model.
+    crime_query = {"$select": "cmplnt_num, cmplnt_fr_dt, cmplnt_fr_tm, ofns_desc, latitude, longitude",
+                   "$where": (f"{box} AND cmplnt_fr_dt > '{window[0]}' AND cmplnt_fr_dt <= '{window[1]}T23:59:59' "
+                              f"AND {nyc.NIGHT_COMPLAINTS} AND {nyc.STREET_OFFENSES} AND {nyc.STREET_PREMISES}"),
+                   "$limit": 5000}
+    swapped_box = f"latitude between {w_} and {e_} AND longitude between {s_} and {n_}"  # see nyc.shooting_point
+    shot_query = {"$select": "incident_key, occur_date, occur_time, latitude, longitude",
+                  "$where": (f"(({box}) OR ({swapped_box})) AND occur_date > '{window[0]}' "
+                             f"AND occur_date <= '{window[1]}T23:59:59'"), "$limit": 1000}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        historic = pool.submit(nyc.soda, nyc.CRIME_HISTORIC, timeout=15, attempts=2, **crime_query)
+        ytd = pool.submit(nyc.soda, nyc.CRIME_YTD, timeout=15, attempts=2, **crime_query)
+        shots = pool.submit(nyc.soda, nyc.SHOOTINGS, timeout=15, attempts=2, **shot_query)
+        crime_rows = {r["cmplnt_num"]: r for r in historic.result() + ytd.result()}.values()  # late reports sit in both
+        shot_rows = shots.result()
+    points = [[float(r["latitude"]), float(r["longitude"]), r["cmplnt_fr_dt"][:10], int(r["cmplnt_fr_tm"][:2]),
+               r["ofns_desc"]] for r in crime_rows if r.get("latitude")]
+    for r in shot_rows:
+        where = nyc.shooting_point(r)
+        if where:
+            points.append([where[0], where[1], r["occur_date"][:10], nyc.shooting_hour(r["occur_time"]), "SHOOTING"])
+    return [p for p in points if in_window(p[3], after_hour)]
+
+
+def night_walk_check(state: dict, address: str | None = None, station: str | None = None, after_hour: int = 21) -> dict:
+    b = current_building(address, state)
+    snap = nyc.load_snapshot()
+    if not snap.get("stations"):
+        raise ToolError("Subway station data is missing.", "Tell the user the night-walk check is unavailable.")
+    try:
+        after_hour = int(after_hour)
+    except (TypeError, ValueError):
+        raise ToolError(f"after_hour '{after_hour}' isn't an hour.", "Pass an hour from 21 to 23 (24-hour clock).")
+    if not nyc.NIGHT_START_HOUR <= after_hour <= 23:
+        raise ToolError(f"after_hour must be 21-23 (got {after_hour}).",
+                        "The comparison data covers 9pm-5am; use 21, 22 or 23.")
+
+    st = find_station(station, b, snap["stations"])
+    start, end = (st["lat"], st["lon"]), (b.lat, b.lon)
+    straight_m = nyc.miles_between(*start, *end) * 1609.34
+    if straight_m > 2000:
+        raise ToolError(f"{station_label(st)} is {straight_m / 1609:.1f} miles away, too far for a walk check.",
+                        "Ask the user which station they actually use, or omit station to use the nearest.")
+    window = snap["crime_window"]
+
+    try:
+        points, source = live_incidents(start, end, window, after_hour), "live NYPD data"
+    except DataSourceError:
+        points = [p for p in snap["street_incidents"] if in_window(p[3], after_hour)]
+        points += [[*p, "SHOOTING"] for p in snap["shootings"] if in_window(p[3], after_hour)]
+        source = f"snapshot as of {snap['as_of'].get('street_incidents')} (live NYPD data didn't respond)"
+    on_route = []
+    if points:
+        mask = corridor_mask(np.array([[p[0], p[1]] for p in points]), start, end, b.lat)
+        on_route = [p for p, keep in zip(points, mask) if keep]
+
+    def label(offense: str) -> str:
+        return "shooting" if offense == "SHOOTING" else nyc.OFFENSE_LABELS.get(offense, offense.lower())
+
+    # Where along the walk: split the route into thirds by distance from the station.
+    thirds = Counter()
+    for p in on_route:
+        d_station = nyc.miles_between(*start, p[0], p[1])
+        d_home = nyc.miles_between(*end, p[0], p[1])
+        position = d_station / (d_station + d_home or 1)
+        thirds["near the station" if position < 1 / 3 else "near the building" if position > 2 / 3 else "mid-walk"] += 1
+
+    baseline = comparable_walks(straight_m, after_hour)
+    nearby = comparable_walks(straight_m, after_hour, near=(round(b.lat, 2), round(b.lon, 2)))
+    n = len(on_route)
+
+    def share_with_more(counts: list[int]) -> int:
+        return round(100 * sum(c > n for c in counts) / len(counts)) if counts else None
+
+    def share_with_same(counts: list[int]) -> int:
+        return round(100 * sum(c == n for c in counts) / len(counts)) if counts else None
+
+    minutes = round(straight_m * DETOUR / WALK_M_PER_MIN)
+    hours = f"{after_hour - 12}pm-5am"
+    by_type = dict(Counter(label(p[4]) for p in on_route).most_common())
+    summary = (f"{n} reported street incident(s) between {hours} along the ~{minutes}-min walk from "
+               f"{station_label(st)} in the 12 months to {window[1]}; "
+               f"of similar-length walks from NYC stations, {share_with_more(baseline)}% had more and "
+               f"{share_with_same(baseline)}% had the same number.")
+    return {
+        "address": b.label,
+        "station": {"name": st["name"], "lines": st["routes"], "accessible": st["ada"]},
+        "walk": {"minutes": minutes, "straight_line_m": round(straight_m),
+                 "route_lat_lon": [[round(start[0], 6), round(start[1], 6)], [round(end[0], 6), round(end[1], 6)]]},
+        "hours_checked": hours,
+        "period": {"from": window[0], "to": window[1]},
+        "incidents_on_route": n,
+        "by_type": by_type,
+        "where_on_route": dict(thirds),
+        "comparison": {
+            "citywide": {"walks_compared": len(baseline), "median_incidents": float(np.median(baseline)) if baseline else None,
+                         "share_with_more_incidents_pct": share_with_more(baseline),
+                         "share_with_same_count_pct": share_with_same(baseline)},
+            "within_2_miles": {"walks_compared": len(nearby), "median_incidents": float(np.median(nearby)) if nearby else None,
+                               "share_with_more_incidents_pct": share_with_more(nearby),
+                               "share_with_same_count_pct": share_with_same(nearby)},
+            "method": ("Same-length straight walks from every subway station (and those within 2 miles), in 8 "
+                       "directions, counting the same offenses and hours from the snapshot."),
+        },
+        "points": [[round(p[0], 5), round(p[1], 5), label(p[4]), p[2], p[3]] for p in on_route],
+        "points_columns": ["lat", "lon", "type", "date", "hour"],
+        "summary": summary,
+        "source": source,
+        "note": NIGHT_WALK_NOTE + (" The NYPD publishes about 3 months behind, so the period ends "
+                                   f"{window[1]}."),
+    }
+
+
 # --- What the model sees ---
 
 ADDRESS_ARG = {
@@ -1389,6 +1583,28 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "night_walk_check",
+            "description": (
+                "How does the walk home from the subway look at night in the records? Finds the nearest station "
+                "(or a named one), estimates the walk, and counts reported street incidents (robbery, felony "
+                "assault, sex crimes, theft from a person, shootings) along that route at night over the latest "
+                "12 months of NYPD data, where on the route they happened, and how that compares with similar "
+                "walks from other stations. Use for 'is the walk home safe', 'walk from the subway at night'."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": ADDRESS_ARG,
+                    "station": {"type": "string",
+                                "description": "Station name if the user names one, e.g. '116 St-Columbia University'. Omit for the nearest."},
+                    "after_hour": {"type": "integer", "minimum": 21, "maximum": 23,
+                                   "description": "Start of the night window on a 24-hour clock (window ends 5am). Default 21 (9pm)."},
+                },
+            },
+        },
+    },
 ]
 
 # What the harness runs: tool name -> Python function.
@@ -1404,6 +1620,7 @@ TOOL_MAP = {
     "estimate_sunlight": estimate_sunlight,
     "fact_check_listing": fact_check_listing,
     "review_lease": review_lease,
+    "night_walk_check": night_walk_check,
 }
 
 

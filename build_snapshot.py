@@ -156,7 +156,7 @@ def crime_window() -> tuple[str, str]:
 
 
 def street_incidents(start: str, end: str) -> list[list]:
-    points = []
+    points = {}
     for dataset in (CRIME_HISTORIC, CRIME_YTD):
         rows = fetch_all(dataset, label=f"street incidents {dataset}", **{
             "$select": "cmplnt_num, cmplnt_fr_dt, cmplnt_fr_tm, ofns_desc, latitude, longitude",
@@ -164,10 +164,11 @@ def street_incidents(start: str, end: str) -> list[list]:
                        f"AND {STREET_OFFENSES} AND {STREET_PREMISES} AND latitude IS NOT NULL"),
             "$order": "cmplnt_num"})
         for r in rows:
-            points.append([round(float(r["latitude"]), 5), round(float(r["longitude"]), 5),
-                           r["cmplnt_fr_dt"][:10], int(r["cmplnt_fr_tm"][:2]), r["ofns_desc"]])
-    # A complaint reported late can sit in both files; keep one copy.
-    return [list(p) for p in dict.fromkeys(tuple(p) for p in points)]
+            # Keyed by complaint number: a late report can sit in both files, but two
+            # incidents at the same corner and hour are still two incidents.
+            points[r["cmplnt_num"]] = [round(float(r["latitude"]), 5), round(float(r["longitude"]), 5),
+                                       r["cmplnt_fr_dt"][:10], int(r["cmplnt_fr_tm"][:2]), r["ofns_desc"]]
+    return list(points.values())
 
 
 def shootings(start: str, end: str) -> list[list]:
