@@ -1,55 +1,84 @@
-*** FICTIONAL SAMPLE LEASE: FOR DEMONSTRATING APARTMENT 411 ONLY ***
-This is not a real lease. The landlord, tenant and terms below are invented, and
-some clauses are deliberately problematic so the review has something to find.
+[FICTIONAL SAMPLE — not a real lease]
+This document was written to demonstrate Apartment 411. The landlord, tenant and
+terms are invented, and some clauses are deliberately problematic so the review has
+something to find. Only the street address is real, so the city-record checks work.
 
 RESIDENTIAL LEASE AGREEMENT
 
-This Lease is made on October 1, 2026 between Claremont Gardens Realty LLC
-("Landlord") and Jordan Example ("Tenant").
+This Lease is made on October 1, 2026 between Example Realty LLC ("Landlord") and
+Jordan Example ("Tenant").
 
 1. PREMISES. Landlord leases to Tenant Apartment 4B at 184 Claremont Avenue,
 New York, NY 10027 (the "Apartment").
 
+[FICTIONAL SAMPLE — not a real lease]
+
 2. TERM. The term of this Lease is twelve (12) months, beginning on November 1, 2026
 and ending on October 31, 2027.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 3. RENT. Tenant shall pay monthly rent of $2,850.00, due in advance on the first (1st)
 day of each month.
+
+[FICTIONAL SAMPLE — not a real lease]
 
 4. SECURITY DEPOSIT. Upon signing, Tenant shall deposit $5,700.00, equal to two (2)
 months' rent, as security for Tenant's performance of this Lease. Landlord will return
 the deposit, less lawful deductions, within fourteen (14) days after Tenant moves out.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 5. LATE CHARGES. If any rent is not received more than two (2) days after it is due,
 Tenant shall pay a late fee of $75.00.
+
+[FICTIONAL SAMPLE — not a real lease]
 
 6. APPLICATION FEE. Tenant has paid a non-refundable application and credit check fee
 of $150.00, which is not refundable under any circumstances.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 7. HEAT AND HOT WATER. Heat and hot water are included in the rent. Landlord shall
 provide heat and hot water as required by law.
+
+[FICTIONAL SAMPLE — not a real lease]
 
 8. ATTORNEY'S FEES. If Landlord retains an attorney to enforce any term of this Lease
 or to recover possession of the Apartment, Tenant shall pay Landlord's reasonable
 attorney's fees and costs.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 9. REPAIRS. Tenant shall promptly notify Landlord in writing of any condition requiring
 repair. Landlord shall make repairs within a reasonable time.
+
+[FICTIONAL SAMPLE — not a real lease]
 
 10. WINDOW GUARDS. Window guard notice: Landlord is required by law to install window
 guards in the Apartment if a child 10 years of age or younger lives there, or if Tenant
 requests them. Tenant must complete and return the annual window guard notice.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 11. LEAD-BASED PAINT. Lead-based paint notice: this building was built before 1960.
 Tenant acknowledges receipt of the Lease/Commencement of Occupancy Notice for
 Prevention of Lead-Based Paint Hazards and the EPA pamphlet.
 
+[FICTIONAL SAMPLE — not a real lease]
+
 12. SPRINKLER DISCLOSURE. THERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN
 THE LEASED PREMISES.
+
+[FICTIONAL SAMPLE — not a real lease]
 
 13. RIDER. In the event of any conflict, this rider controls. Monthly rent for the
 Apartment is $2,950.00, payable on the first day of each month.
 
-Landlord: Claremont Gardens Realty LLC, by its Managing Member
+[FICTIONAL SAMPLE — not a real lease]
+
+Landlord: Example Realty LLC, by its Managing Member
 
 Tenant: Jordan Example
+
+[FICTIONAL SAMPLE — not a real lease]

@@ -19,6 +19,7 @@ from pypdf.errors import PdfReadError
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 logging.getLogger("pypdf").setLevel(logging.ERROR)  # never echo anything about a user's file to the logs
+SAMPLE_LABEL = "FICTIONAL SAMPLE — not a real lease"  # on every section of data/sample_lease.txt
 LIKELY_NOT_ALLOWED, CHECK, INCONSISTENT = "likely not allowed under NY law", "check with landlord", "inconsistent"
 
 # --- Rules (each verified on the official page in `source`) ---
@@ -115,6 +116,11 @@ def pdf_to_text(data: bytes) -> str:
     if len(text.strip()) < 200:
         raise ValueError("This PDF is a scan with no text layer. Paste the lease text instead.")
     return text
+
+
+def is_sample(text: str) -> bool:
+    """The demo lease, however it arrived (text, paste or PDF: extraction can change the dash)."""
+    return "fictional sample" in text.lower()
 
 
 def looks_like_lease(text: str) -> bool:

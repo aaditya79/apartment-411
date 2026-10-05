@@ -1179,7 +1179,7 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     extracted["rents_stated"] = [m["amount"] for m in facts["rent_mentions"]]
     return {
         "address": b.label if b else None,
-        "is_sample": text.lstrip().startswith("*** FICTIONAL SAMPLE LEASE"),
+        "is_sample": lease.is_sample(text),
         "flag_counts": {sev: sum(f["severity"] == sev for f in flags) for sev in order},
         "flags": flags,
         "missing_disclosures": lease.missing_disclosures(facts, b.units if b else None, b.year_built if b else None),
