@@ -297,7 +297,8 @@ def contact_name(c: dict) -> str:
 
 def business_address(c: dict) -> str:
     parts = [c.get("businesshousenumber"), c.get("businessstreetname"), c.get("businesszip")]
-    return " ".join(p for p in parts if p).strip()
+    text = " ".join(p for p in parts if p).strip()
+    return text.title() if text.isupper() else text
 
 
 # --- Geocoding ---
