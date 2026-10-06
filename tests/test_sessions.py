@@ -97,6 +97,24 @@ def test_pasted_lease_is_stored():
     assert "FICTIONAL SAMPLE" in server.sessions[sid]["state"]["lease_text"]
 
 
+SHORT_LEASE = ("LEASE. Landlord: Example Realty LLC. Tenant: Sam Tenant. Premises: 155 East 92nd Street, Apt 2B, "
+               "New York, NY 10128. Term: 12 months commencing 01/01/2027. Monthly rent: $3,000.00. Security deposit: "
+               "$3,000.00. Late charge: $50 after five days. Tenant shall not sublet without Landlord's consent.")
+
+
+def test_short_pasted_lease_is_stored_but_questions_dont_replace_it():
+    import lease
+    assert len(SHORT_LEASE) < 500 and lease.looks_like_lease(SHORT_LEASE)
+    client = TestClient(server.app)
+    sid = post_chat(client, SHORT_LEASE)["session_id"]
+    assert server.sessions[sid]["state"]["lease_text"] == SHORT_LEASE
+    question = ("My landlord says the tenant has to pay a $3,000 security deposit before the lease term starts. Is "
+                "that allowed for this apartment under the lease and NY rent rules?")
+    assert not lease.looks_like_lease(question) or len(question) < 1500
+    post_chat(client, question, sid)
+    assert server.sessions[sid]["state"]["lease_text"] == SHORT_LEASE, "a question must not replace the stored lease"
+
+
 def make_docx(text: str) -> bytes:
     """A minimal real .docx: a zip with word/document.xml, one w:p per paragraph."""
     import io

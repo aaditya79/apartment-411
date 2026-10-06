@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 import lease
 import nyc
+import tools
 from tools import TOOLS, run_tool
 
 # --- Config ---
@@ -60,7 +61,8 @@ person by name or "they"; never guess anyone's gender.
 
 Only list a metric under red flags when the tool's own comparison shows it worse than the area (or, with no \
 comparison, when it's clearly a problem: hazardous violations, failed rat inspections, evictions). If it's at or \
-better than the area, it's context or a green flag.
+better than the area (better_than_area is true), it's context or a green flag, never a red flag. A handful of \
+complaints over several years is context, not a red flag.
 
 Format for a building report: a one-sentence verdict, then "🚩 Red flags", then "✅ Green flags", then three \
 specific questions to ask the broker or landlord, then one line on data limits. About 250 words unless the user \
@@ -255,9 +257,17 @@ def chat(request: ChatRequest, response: Response, a411_session: str | None = Co
     with_cookie(response, session_id)
 
     with session["lock"]:
-        # A long pasted lease is stored for review_lease, so the model never has to copy it into a tool call.
-        if lease.looks_like_lease(request.message):
-            session["state"]["lease_text"] = request.message
+        # A pasted lease is stored for review_lease, so the model never has to copy it into a tool call.
+        # A short lease-like message only fills an empty slot: it may be a question about the lease
+        # already attached, and must not replace it.
+        state = session["state"]
+        pasted_lease = lease.looks_like_lease(request.message)
+        if pasted_lease and (not state.get("lease_text") or len(request.message) >= 1500):
+            state["lease_text"] = request.message
+            state["lease_attached_note"] = True
+        if not pasted_lease:
+            # A new address in the message becomes the building before any tool runs.
+            tools.note_addresses_in_message(request.message, state)
 
         # An upload happens outside the chat, so tell the model about it once, with the next message.
         content = request.message

@@ -56,11 +56,45 @@ def current_building(address: str | None, state: dict) -> nyc.Building:
                                         "Manhattan'). Intersections and neighborhood names can't be looked up."))
         state.setdefault("buildings", {})[building.bbl] = building
         state["current_bbl"] = building.bbl
+        state.pop("unresolved_address", None)
         return building
+    if state.get("unresolved_address"):
+        # The user just named a different address: never answer about the previous building instead.
+        raise ToolError(f"The user just named {state['unresolved_address']}, which hasn't been looked up yet.",
+                        "Call look_up_building with that address first (or pass the address explicitly), then "
+                        "call this tool again.")
     bbl = state.get("current_bbl")
     if not bbl:
         raise NO_BUILDING
     return state["buildings"][bbl]
+
+
+def note_addresses_in_message(message: str, state: dict) -> None:
+    """Before the model runs: if the user's message names a street address, make it the building
+    being discussed, so address-less follow-up tools can't run against the previous one.
+
+    One address that resolves becomes current right away. An address that doesn't resolve (or
+    several, as in a comparison) blocks address-less tools until the model looks them up.
+    """
+    state.pop("unresolved_address", None)
+    found = list(dict.fromkeys(m.group(1).strip(" ,.") for m in ADDRESS_IN_TEXT.finditer(message)))
+    if not found:
+        return
+    current = state.get("buildings", {}).get(state.get("current_bbl"))
+    if current and len(found) == 1:
+        try:
+            # "155 East 92nd Street" (no borough) about the building already being discussed: nothing to do.
+            nyc._check_match(found[0], current.label.split(",")[0], current.borough)
+            return
+        except AddressError:
+            pass
+    if len(found) == 1:
+        try:
+            current_building(found[0], state)
+            return
+        except (ToolError, DataSourceError):
+            pass
+    state["unresolved_address"] = " and ".join(f"'{a}'" for a in found)
 
 
 def not_registered(b: nyc.Building) -> str:
@@ -546,9 +580,9 @@ def describe_rank(mine: float, rates: list[float]) -> str:
             f"({median_text}{tie_text})")
 
 
-def heat_comparison(count: int, units: int, area_count: int, area_units: int) -> dict:
-    """Heat complaints as a rate on both sides, with a sentence to quote: comparing this building's
-    raw count with the area's rate per 100 apartments (which the model once did) is meaningless."""
+def rate_comparison(what: str, count: int, units: int, area_count: int, area_units: int) -> dict:
+    """A count as a rate per 100 apartments on both sides, with a sentence to quote: comparing this
+    building's raw count with the area's rate (which the model once did) is meaningless."""
     here = round(100 * count / units, 1) if units else None
     area = round(100 * area_count / area_units, 1) if area_units else None
     if here and area:
@@ -557,8 +591,13 @@ def heat_comparison(count: int, units: int, area_count: int, area_units: int) ->
         ratio = ""
     plural = "complaint" if count == 1 else "complaints"
     return {"this_building": here, "area": area, "this_building_count": count,
-            "compare_as": (f"{here} heat/hot-water complaints per 100 apartments here vs {area} for nearby rentals"
-                           f"{ratio}, since 2023 ({count} {plural} across {units} apartments here)")}
+            "better_than_area": (here is not None and area is not None and here < area),
+            "compare_as": (f"{here} {what} per 100 apartments here vs {area} for nearby rentals{ratio}, since 2023 "
+                           f"({count} {plural} across {units} apartments here)")}
+
+
+def heat_comparison(count: int, units: int, area_count: int, area_units: int) -> dict:
+    return rate_comparison("heat/hot-water complaints", count, units, area_count, area_units)
 
 
 def get_neighborhood_context(state: dict, address: str | None = None, radius_miles: float = 0.25) -> dict:
@@ -607,6 +646,7 @@ def get_neighborhood_context(state: dict, address: str | None = None, radius_mil
                         "Try a larger radius (up to 0.5 miles), or offer the sunlight and night-walk checks.")
 
     open_v, heat, rats = snap["open_violations_by_bbl"], snap["heat_by_bbl"], snap["rodents_by_lot"]
+    complaints = snap["complaints_by_bbl"]
     rate = {k: sum(open_v.get(k, [0, 0, 0])) / v["units"] for k, v in rentals.items()}
     others = [r for k, r in rate.items() if k != b.bbl] or [0.0]
     total_units = sum(v["units"] for v in rentals.values())
@@ -627,6 +667,9 @@ def get_neighborhood_context(state: dict, address: str | None = None, radius_mil
         "heat_complaints_per_100_apartments_since_2023": (
             heat_comparison(heat.get(b.bbl, 0), b.units, area_heat, total_units) if comparable else
             {"this_building": None, "area": round(100 * area_heat / total_units, 1) if total_units else None}),
+        "all_complaints_per_100_apartments_since_2023": (
+            rate_comparison("HPD complaints (all kinds)", complaints.get(b.bbl, 0), b.units,
+                            sum(complaints.get(k, 0) for k in rentals), total_units) if comparable else None),
         "rats": {
             "share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023": f"{round(100 * len(rat_lots) / len(rentals))}%",
             "this_building_failed_one": (rats.get(b.bbl, [0, 0])[1] > 0),

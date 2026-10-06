@@ -176,4 +176,13 @@ text = s["response"]
 red = text.split("Red flags", 1)[-1].split("Green flags", 1)[0].lower() if "Red flags" in text else ""
 check("heat" not in red, "heat (3.3 per 100 apts vs ~96 nearby) must not be listed as a red flag")
 
+# --- A new address in the message: nothing may answer about the previous building ---
+print("\n=== new address switches building")
+first = chat("Look up 350 5th Avenue, Manhattan", None, "switch: building A")
+sid = first["session_id"]
+a_label = next(json.loads(c["result"]).get("address") for c in first["tool_calls"] if c["name"] == "look_up_building")
+s = chat("2053 Frederick Douglass Blvd, Manhattan", sid, "switch: only building B's address")
+stale = [c["name"] for c in s["tool_calls"] if json.loads(c["result"]).get("address") == a_label]
+check(not stale, f"tools returned data for the previous building {a_label}: {stale}")
+
 print("\n" + ("ALL CHECKS PASSED" if not problems else f"{len(problems)} PROBLEMS:\n- " + "\n- ".join(problems)))

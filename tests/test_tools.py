@@ -48,6 +48,23 @@ def test_lookup_and_follow_ups_in_the_same_round():
     assert "error" not in sun, sun
 
 
+def test_new_address_in_message_switches_building_first():
+    """Building A is current; the user sends only building B's address. No tool may return A's data."""
+    from tools import note_addresses_in_message
+    state = {}
+    a = json.loads(run_tool("look_up_building", {"address": "350 5th Avenue, Manhattan"}, state))["address"]
+    note_addresses_in_message("2053 Frederick Douglass Blvd, Manhattan", state)  # what /chat does before the model
+    calls = [fake_call(0, "check_maintenance_record", {}), fake_call(1, "check_pests", {}),
+             fake_call(2, "estimate_sunlight", {}), fake_call(3, "look_up_building", {"address": "2053 Frederick Douglass Blvd, Manhattan"})]
+    for call, args, result in app.run_round(calls, state):
+        r = json.loads(result)
+        assert r.get("address") != a, (call.function.name, "returned data for the previous building")
+    # An address that can't be resolved blocks address-less tools instead of falling back to A.
+    note_addresses_in_message("123 Fake Street", state)
+    r = json.loads(run_tool("check_pests", {}, state))
+    assert "hasn't been looked up" in r.get("error", ""), r
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

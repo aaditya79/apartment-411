@@ -200,11 +200,18 @@ def is_sample(text: str) -> bool:
     return "fictional sample" in text.lower()
 
 
+LEASE_WORDS = ("lease", "landlord", "tenant", "premises", "security deposit", "monthly rent", "rent", "term",
+               "commence", "expire", "apartment", "late charge", "sublet", "renew")
+
+
 def looks_like_lease(text: str) -> bool:
-    """For pasted chat messages: long and lease-shaped."""
+    """For pasted chat messages: lease wording, not length. Both parties, several lease terms, and
+    the specifics a lease has (a dollar amount or a date). A ~400-character lease counts; a question
+    that merely mentions a landlord doesn't."""
     lowered = text.lower()
-    return len(text) >= 1500 and sum(w in lowered for w in ("lease", "landlord", "tenant", "rent", "security deposit",
-                                                            "premises", "term")) >= 4
+    terms = sum(w in lowered for w in LEASE_WORDS)
+    specifics = bool(MONEY.search(text) or DATE.search(text))
+    return len(text) >= 200 and "landlord" in lowered and "tenant" in lowered and terms >= 5 and specifics
 
 
 def clauses(text: str) -> list[str]:
