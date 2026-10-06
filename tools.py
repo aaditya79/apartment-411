@@ -30,12 +30,13 @@ from nyc import AddressError, DataSourceError
 
 
 class ToolError(Exception):
-    """A failure the model can act on: what went wrong, and what to do next."""
+    """A failure the model can act on: what went wrong, what to do next, and any facts that help."""
 
-    def __init__(self, error: str, next_step: str):
+    def __init__(self, error: str, next_step: str, **extra):
         super().__init__(error)
         self.error = error
         self.next_step = next_step
+        self.extra = extra
 
 
 NO_BUILDING = ToolError("No building selected yet.",
@@ -737,9 +738,50 @@ def matching_violations(open_rows: list[dict], issues: list[str], apartment: str
     return cite, elsewhere
 
 
+STOP_WORDS = {"about", "after", "again", "also", "been", "being", "from", "have", "having", "here", "into", "just",
+              "like", "more", "need", "needs", "please", "some", "that", "their", "them", "there", "they", "this",
+              "very", "were", "what", "when", "where", "which", "will", "with", "would", "your", "since", "still",
+              "write", "letter", "landlord", "request", "create", "make", "submit", "apartment", "building", "home"}
+
+
+def content_words(text: str) -> set[str]:
+    """Meaningful words, cut to 5 letters so 'leaking' matches 'leak' and 'ceilings' matches 'ceiling'."""
+    return {w[:5] for w in re.findall(r"[a-z]{4,}", (text or "").lower()) if w not in STOP_WORDS}
+
+
+def issues_seen_here(b: nyc.Building) -> list[str]:
+    """Kinds of problems in this building's open HPD violations: examples to offer, never to assert."""
+    found = Counter()
+    for v in fetch_open_violations(b):
+        text = (v.get("novdescription") or "").upper()
+        for issue, words in ISSUE_KEYWORDS.items():
+            if any(w in text for w in words):
+                found[issue] += 1
+    return [issue.replace("_", " ") for issue, _ in found.most_common(6)]
+
+
 def draft_repair_request(state: dict, issues: list[str], details: str | None = None, apartment: str | None = None,
                          tenant_name: str | None = None) -> dict:
     b = current_building(None, state)
+    # The letter is the tenant's own account, signed and sent by them. Its conditions come only from what
+    # they said in this chat, never from building records (which may be about other apartments).
+    said = " ".join(state.get("user_messages", []))
+    if not (details or "").strip():
+        raise ToolError(
+            "The tenant hasn't said what needs repairing, so there's nothing to put in the letter.",
+            "Ask the user what's wrong in their apartment (what, where, since when) before drafting. You may "
+            "mention the kinds of problems HPD has open violations for in this building, as examples to choose "
+            "from, not as their problem.",
+            issues_recorded_in_this_building=issues_seen_here(b))
+    stated = content_words(said)
+    claimed = content_words(details)
+    unsupported = sorted(w for w in claimed if w not in stated)
+    if claimed and len(unsupported) > len(claimed) / 2:
+        raise ToolError(
+            "details must be the tenant's own description, but most of it isn't in anything they've said here.",
+            "Use only the problems the user described, in their words. If they haven't described one, ask them "
+            "what's wrong; don't take conditions from building records.",
+            issues_recorded_in_this_building=issues_seen_here(b))
     if not issues:
         raise ToolError("No issues given.", f"Pass one or more of: {', '.join(ISSUE_KEYWORDS)}.")
     unknown = [i for i in issues if i not in ISSUE_KEYWORDS]
@@ -757,18 +799,18 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
     if agent:
         lines.append(f"Cc: {agent['name']} (managing agent)" + (f", {agent['business_address']}" if agent.get("business_address") else ""))
     lines += ["", f"Re: Repairs needed at {b.label}{unit}, {b.borough}", "", "Dear Owner/Managing Agent,", ""]
-    if details:
-        lines += [f"I am writing about the following conditions in my home: {details.strip().rstrip('.')}.", ""]
+    lines += [f"I am writing about the following conditions in my home: {details.strip().rstrip('.')}.", ""]
     if cited:
-        lines.append("HPD has already issued violations for these conditions, and they remain open in city records:")
+        lines.append("City records support this: HPD has open violations for these conditions at this building:")
         for v in cited:
             t = split_violation_text(v.get("novdescription"))
-            lines.append(f"  - Violation {v.get('violationid')} (class {v.get('class')}, inspected "
+            lines.append(f"  - Violation {v.get('violationid')} (class {v.get('class')}, issued after an inspection on "
                          f"{short_date(v.get('inspectiondate'))}): {t['what'][:180]}"
                          + (f" [{t['code_section']}]" if t["code_section"] else ""))
         lines.append("")
     else:
-        lines += ["I could not find an open HPD violation for these conditions, so I am reporting them to you directly.", ""]
+        lines += ["HPD has no open violation on record matching these conditions yet, so I am reporting them to you "
+                  "directly.", ""]
     lines += [
         "Please arrange the repairs and let me know in writing, within 14 days of this letter, when the work "
         "will be done. I will provide access at reasonable times with advance notice.",
@@ -1769,8 +1811,8 @@ TOOLS = [
             "name": "draft_repair_request",
             "description": (
                 "Write a polite, firm repair-request letter from a tenant to their landlord for the building "
-                "being discussed, citing any matching OPEN HPD violations (ID, date, code section), plus the "
-                "official escalation steps. Call look_up_building first. Use when a current tenant describes a "
+                "being discussed, about the problem THE TENANT described, citing any matching OPEN HPD violations "
+                "(ID, date, code section) as supporting records, plus the official escalation steps. Call look_up_building first. Use when a current tenant describes a "
                 "problem in their home. Not legal advice."),
             "parameters": {
                 "type": "object",
@@ -1779,13 +1821,15 @@ TOOLS = [
                                "items": {"type": "string", "enum": list(ISSUE_KEYWORDS)},
                                "description": "The kinds of problem, e.g. ['water_leak', 'paint_plaster'] for a leaking ceiling."},
                     "details": {"type": "string",
-                                "description": "The tenant's own description, e.g. 'the bathroom ceiling has leaked since June'."},
+                                "description": ("What the tenant said is wrong, in their own words, e.g. 'the bathroom "
+                                                "ceiling has leaked since June'. Required: only what they told you, never "
+                                                "conditions from building records. If they haven't said, ask them first.")},
                     "apartment": {"type": "string",
                                   "description": "The tenant's apartment as THEY stated it, e.g. '2N'. Omit if they haven't said; never infer it."},
                     "tenant_name": {"type": "string",
                                     "description": "Name to sign with, only if the user gave it. Omit to leave a placeholder."},
                 },
-                "required": ["issues"],
+                "required": ["issues", "details"],
             },
         },
     },
@@ -1968,7 +2012,7 @@ def run_tool(name: str, args: dict, state: dict) -> str:
     try:
         return json.dumps(TOOL_MAP[name](**args, state=state))
     except ToolError as e:
-        return json.dumps({"error": e.error, "next_step": e.next_step})
+        return json.dumps({"error": e.error, "next_step": e.next_step, **e.extra})
     except TypeError as e:
         return json.dumps({"error": f"Bad arguments for {name}: {e}",
                            "next_step": "Check the argument names and types in the tool description and retry."})
@@ -1985,7 +2029,7 @@ if __name__ == "__main__":
     import time
 
     address = " ".join(sys.argv[1:]) or "155 East 92nd Street, Manhattan"
-    state: dict = {}
+    state: dict = {"user_messages": ["My bathroom ceiling has been leaking for months."]}
     calls = [
         ("look_up_building", {"address": address}),
         ("check_maintenance_record", {}),

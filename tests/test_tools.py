@@ -77,6 +77,36 @@ def test_catalog_matches_tools():
     assert sum(t["original"] for t in served) == 6
 
 
+def test_repair_letter_only_states_what_the_tenant_said():
+    state = {"user_messages": ["Look up 155 East 92nd Street, Manhattan", "create a request to submit to my landlord"]}
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+
+    # No problem stated: no letter, a question, and record-based examples to offer (not to assert).
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["water_leak"]}, state))
+    assert "hasn't said what needs repairing" in r["error"] and "Ask the user" in r["next_step"], r
+    assert r["issues_recorded_in_this_building"], r
+
+    # Conditions taken from building records, not from the tenant: refused.
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["water_leak", "safety"],
+                   "details": "Water leak at ceiling in the bathroom, and smoke/carbon monoxide detectors needing repair"}, state))
+    assert "own description" in r.get("error", ""), r
+
+    # The tenant's own words: the letter states exactly those; violations appear only as supporting records.
+    state["user_messages"].append("My bathroom ceiling has been leaking since June")
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["water_leak"], "apartment": "18",
+                   "details": "the bathroom ceiling has been leaking since June"}, state))
+    letter = r["letter_text"]
+    assert "conditions in my home: the bathroom ceiling has been leaking since June." in letter, letter
+    assert "smoke" not in letter.lower() and "carbon monoxide" not in letter.lower()
+    assert "City records support this" in letter and "HPD has no open violation" not in letter
+
+    # A stated problem with no matching violation: says so plainly, no contradiction.
+    state["user_messages"].append("the elevator is broken")
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["elevator"], "details": "the elevator is broken"}, state))
+    assert "HPD has no open violation on record matching these conditions" in r["letter_text"], r["letter_text"]
+    assert "City records support this" not in r["letter_text"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

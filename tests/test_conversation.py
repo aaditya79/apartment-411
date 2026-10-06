@@ -192,6 +192,17 @@ counted = [ln for ln in re.split(r"(?<=[.!?])\s+|\n", s["response"]) if re.searc
 bare = [ln for ln in counted if not re.search(r"12 months|2026", ln)]
 check(not bare, f"every incident count needs its window; bare: {bare[:3]}")
 
+# --- A repair letter with no stated problem: ask, never invent conditions from records ---
+print("\n=== repair letter without a stated problem")
+sid = fresh()
+chat("Look up 155 East 92nd Street, Manhattan", sid, "repair: building with open violations")
+s = chat("create a request to submit to my landlord", sid, "repair: no problem stated")
+letters = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "draft_repair_request"]
+check(not any("letter_text" in r for r in letters), "no letter may be drafted before the tenant says what's wrong")
+check("following conditions in my home" not in s["response"], "the answer must not contain a letter asserting conditions")
+check(bool(re.search(r"\?|tell me|let me know|what('s| is) (wrong|the problem)", s["response"], re.IGNORECASE)),
+      "the agent should ask what needs repairing")
+
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")
 s = chat("I'm thinking of renting at 2053 Frederick Douglass Blvd in Manhattan. Should I worry about anything?",

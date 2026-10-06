@@ -30,6 +30,11 @@ Then offer the sunlight check (ask which floor and which side if you don't know)
 - Pasted listing text, or a quote from a listing ("the listing says..."): fact_check_listing with the quoted text, even if you've already run other tools; give its verdict for each claim.
 - An uploaded or pasted lease ("review my lease"): review_lease. Present its flags as questions to raise with the \
 landlord, not legal conclusions. If is_sample is true, say it's the fictional sample lease.
+- Repair letters: before calling draft_repair_request, the user must have said what's wrong in their apartment. If \
+they haven't ("write a letter to my landlord"), ask what the problem is (what, where, since when). You may list the \
+kinds of problems city records show in the building as examples to choose from, but never assume any of them is \
+theirs. Pass their own description as details. Once they've said what's wrong, draft the letter right away: the \
+apartment and name are optional (the letter leaves placeholders), so offer to add them afterwards instead of asking first.
 - A current tenant describing a repair problem: draft_repair_request, and show the letter in full. Use only the apartment and name the user gave you; if the tool reports matching violations in other apartments, ask whether one of them is theirs instead of assuming.
 - Follow-ups are about the building already being discussed unless the user names another one. For those, call \
 the tools WITHOUT the address argument (the app remembers the building), and never ask the user for an address \
@@ -311,6 +316,9 @@ def chat(request: ChatRequest, response: Response, http: Request, a411_session: 
         # A short lease-like message only fills an empty slot: it may be a question about the lease
         # already attached, and must not replace it.
         state = session["state"]
+        if not lease.looks_like_lease(request.message):
+            # What the user has actually said: the repair letter may only describe these words.
+            state.setdefault("user_messages", []).append(request.message)
         pasted_lease = lease.looks_like_lease(request.message)
         if pasted_lease and (not state.get("lease_text") or len(request.message) >= 1500):
             state["lease_text"] = request.message
@@ -494,7 +502,7 @@ WARM_UP_CALLS = [("check_maintenance_record", {}), ("get_tenant_complaints", {})
                  ("check_evictions_and_court", {}), ("get_landlord_portfolio", {}), ("get_neighborhood_context", {}),
                  ("estimate_sunlight", {"floor": "4"}), ("estimate_sunlight", {"floor": "all"}), ("night_walk_check", {}),
                  ("fact_check_listing", {"listing_text": "sun-drenched 4th floor in a well-maintained building", "floor": "4"}),
-                 ("draft_repair_request", {"issues": ["water_leak", "paint_plaster"]})]
+                 ]
 
 
 def warm_up() -> None:
