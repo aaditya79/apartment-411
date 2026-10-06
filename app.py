@@ -107,6 +107,34 @@ def run_one(call, state: dict) -> tuple[dict, str]:
     return args, result
 
 
+def sets_building(call) -> bool:
+    """Calls that choose the building: a lookup, or any tool given an explicit address."""
+    if call.function.name.strip() == "look_up_building":
+        return True
+    try:
+        return bool(json.loads(call.function.arguments or "{}").get("address"))
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
+def run_round(calls: list, state: dict) -> list[tuple]:
+    """Run one round of tool calls: [(call, args, result)] in the model's order.
+
+    A building report asks for ~7 tools at once, each waiting on city data, so they run in parallel.
+    But calls that choose the building go first: the model often asks for look_up_building and the
+    follow-up tools (with no address) in the same round, and run all at once the follow-ups saw
+    "No building selected yet".
+    """
+    first = [c for c in calls if sets_building(c)]
+    rest = [c for c in calls if not sets_building(c)]
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for group in (first, rest):
+            for call, outcome in zip(group, pool.map(lambda c: run_one(c, state), group)):
+                results[id(call)] = outcome
+    return [(call, *results[id(call)]) for call in calls]
+
+
 def call_key(call) -> str:
     """Same tool + same arguments = same call, however the model ordered the keys."""
     try:
@@ -141,13 +169,11 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
         if not reply.tool_calls:
             return reply.content, tool_calls
 
-        # The harness, not the model, runs each tool and appends the result. A building report asks
-        # for ~7 tools in one round; each waits on city data, so run them at the same time.
+        # The harness, not the model, runs each tool and appends the result.
         fresh = [c for c in reply.tool_calls if call_key(c) not in seen]
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            for call, (args, result) in zip(fresh, pool.map(lambda c: run_one(c, state), fresh)):
-                seen.setdefault(call_key(call), result)
-                tool_calls += [{"name": call.function.name.strip(), "args": args, "result": result}]
+        for call, args, result in run_round(fresh, state):
+            seen.setdefault(call_key(call), result)
+            tool_calls += [{"name": call.function.name.strip(), "args": args, "result": result}]
         for call in reply.tool_calls:
             result = seen[call_key(call)]
             if call not in fresh:

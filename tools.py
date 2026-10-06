@@ -63,6 +63,15 @@ def current_building(address: str | None, state: dict) -> nyc.Building:
     return state["buildings"][bbl]
 
 
+def not_registered(b: nyc.Building) -> str:
+    """Why HPD records don't cover this building, in a sentence the model can pass on."""
+    if "HOUSING AUTHORITY" in (b.owner_name or "").upper():
+        return (f"{b.label} is NYCHA public housing, which isn't HPD-registered: NYCHA handles its own repairs and "
+                "complaints, so HPD violation, complaint and court records don't cover it.")
+    return (f"{b.label} isn't HPD-registered (registration covers rentals with 3+ apartments; houses and many "
+            "co-ops/condos are exempt), so HPD has no records of this kind for it.")
+
+
 def lot_filter(b: nyc.Building, boro: str = "boroid") -> dict:
     """Most HPD datasets are keyed by borough/block/lot rather than BBL."""
     boro_id, block, lot = nyc.split_bbl(b.bbl)
@@ -171,6 +180,12 @@ def check_maintenance_record(state: dict, address: str | None = None) -> dict:
         "$select": "inspectiondate, currentstatusdate, currentstatus",
         "$where": f"inspectiondate >= '{nyc.SINCE}' AND currentstatus != 'VIOLATION DISMISSED'",
         "$limit": 2000})
+    # "0 open violations" for a building HPD doesn't oversee would read as spotless. An unregistered
+    # building that does have HPD violations (an owner who never registered) still gets them shown.
+    if not b.is_registered and not open_rows and not fixed:
+        raise ToolError(not_registered(b) + " There are no HPD violation records for it.",
+                        "Tell the user HPD maintenance records don't cover this building; offer the sunlight, "
+                        "night-walk and rat-inspection checks, which still apply.")
 
     by_class = Counter(v.get("class") for v in open_rows)
     ages = [d for d in (nyc.days_since(v.get("inspectiondate")) for v in open_rows) if d is not None]
@@ -242,6 +257,10 @@ def get_tenant_complaints(state: dict, address: str | None = None, category: str
             "note": "Only totals are available from the snapshot; ask again later for details.",
         }
 
+    if not b.is_registered and not rows:
+        raise ToolError(not_registered(b) + " There are no HPD tenant complaints on record for it.",
+                        "Tell the user HPD complaint records don't cover this building; offer the checks that do apply.")
+
     # One complaint can list several problems (one row each): count complaints, not rows.
     complaints: dict[str, dict] = {}
     categories_by_complaint: dict[str, set] = {}
@@ -309,12 +328,17 @@ def check_pests(state: dict, address: str | None = None) -> dict:
             "passed": sum(r.get("result") == "Passed" for r in rats),
             "last_failed": short_date(failed[0]["inspection_date"]) if failed else None,
         },
-        "bedbug_filings": filings or "No bedbug filings on record (owners file annually; small buildings may not).",
+        "bedbug_filings": filings or ("Not HPD-registered: bedbug filings are only required of registered rentals, so "
+                                      "there is no bedbug record." if not b.is_registered else
+                                      "No bedbug filings on record (owners file annually; small buildings may not)."),
         "note": ("Rat inspections are by the Health Department and cover the whole lot, often after a complaint. "
                  "Bedbug filings are self-reported by the owner each year."),
     }
     if any(f["infested_units"] for f in filings):
         result["bedbug_disclosure"] = BEDBUG_RULE
+    if not b.is_registered:
+        result["hpd_registered"] = False
+        result["note"] += " " + not_registered(b) + " Rat inspections are Health Department records and still apply."
     return result
 
 
@@ -345,7 +369,7 @@ def check_evictions_and_court(state: dict, address: str | None = None) -> dict:
         "$select": "casetype, caseopendate, casestatus, casejudgement",
         "$order": "caseopendate DESC", "$limit": 200})
 
-    return {
+    result = {
         "address": b.label,
         "residential_evictions_since_2023": {"count": len(evictions),
                                              "dates": [short_date(e.get("executed_date")) for e in evictions[:10]]},
@@ -359,6 +383,10 @@ def check_evictions_and_court(state: dict, address: str | None = None) -> dict:
         "note": ("Evictions are those carried out by a city marshal, not cases filed. HPD cases are housing-court "
                  "cases about conditions, not tenants' rent cases."),
     }
+    if not b.is_registered:
+        result["note"] += " " + not_registered(b) + " Marshal evictions are court records and still apply."
+    return result
+
 
 
 # --- Tool 6 ---
@@ -569,10 +597,14 @@ def get_neighborhood_context(state: dict, address: str | None = None, radius_mil
         registered |= {nyc.make_bbl(boro, r["block"], r["lot"]) for r in rows}
     rentals = {k: v for k, v in nearby.items() if k in registered and v["units"]}
     rentals.setdefault(b.bbl, {"address": b.label, "units": b.units, "lat": b.lat, "lon": b.lon})
-    if not b.units or not b.is_registered:
-        raise ToolError(f"{b.label} is not an HPD-registered rental, so it can't be compared with nearby rentals.",
-                        "Tell the user the area comparison covers rental buildings with 3+ apartments; offer the "
-                        "sunlight, night-walk or daily-life checks instead.")
+    # A building HPD doesn't oversee has no HPD records, so a "0 per apartment" would rank it cleanest:
+    # describe the area, but don't place this building in it.
+    comparable = bool(b.units) and b.is_registered
+    if not comparable:
+        rentals.pop(b.bbl, None)
+    if not rentals:
+        raise ToolError(f"There are no HPD-registered rentals within {radius} miles of {b.label} to describe.",
+                        "Try a larger radius (up to 0.5 miles), or offer the sunlight and night-walk checks.")
 
     open_v, heat, rats = snap["open_violations_by_bbl"], snap["heat_by_bbl"], snap["rodents_by_lot"]
     rate = {k: sum(open_v.get(k, [0, 0, 0])) / v["units"] for k, v in rentals.items()}
@@ -587,14 +619,17 @@ def get_neighborhood_context(state: dict, address: str | None = None, radius_mil
         "radius_miles": radius,
         "compared": {"rental_buildings": len(rentals), "apartments": total_units},
         "open_violations_per_apartment": {
-            "this_building": round(rate[b.bbl], 2),
+            "this_building": round(rate[b.bbl], 2) if comparable else None,
             "area_median": round(statistics.median(others), 2),
-            "this_building_vs_area": describe_rank(rate[b.bbl], others),
+            "this_building_vs_area": describe_rank(rate[b.bbl], others) if comparable else
+            "not compared: " + not_registered(b),
         },
-        "heat_complaints_per_100_apartments_since_2023": heat_comparison(heat.get(b.bbl, 0), b.units, area_heat, total_units),
+        "heat_complaints_per_100_apartments_since_2023": (
+            heat_comparison(heat.get(b.bbl, 0), b.units, area_heat, total_units) if comparable else
+            {"this_building": None, "area": round(100 * area_heat / total_units, 1) if total_units else None}),
         "rats": {
             "share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023": f"{round(100 * len(rat_lots) / len(rentals))}%",
-            "this_building_failed_one": b.bbl in rat_lots,
+            "this_building_failed_one": (rats.get(b.bbl, [0, 0])[1] > 0),
         },
         "worst_nearby": [{"address": rentals[k]["address"], "apartments": rentals[k]["units"],
                           "open_violations": sum(open_v.get(k, [0, 0, 0])), "per_apartment": round(rate[k], 2)}
