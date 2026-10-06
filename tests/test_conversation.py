@@ -195,4 +195,11 @@ s = chat("2053 Frederick Douglass Blvd, Manhattan", sid, "switch: only building 
 stale = [c["name"] for c in s["tool_calls"] if json.loads(c["result"]).get("address") == a_label]
 check(not stale, f"tools returned data for the previous building {a_label}: {stale}")
 
+# --- The new example buttons call the tool they showcase ---
+print("\n=== example buttons")
+s = chat("How much direct sun does a 4th-floor apartment at 155 East 92nd Street, Manhattan get?", fresh(), "example: sunlight")
+check("estimate_sunlight" in tools_used(s), f"the sunlight example should call estimate_sunlight (called {tools_used(s)})")
+s = chat("Is 155 East 92nd Street, Manhattan worse than its block?", fresh(), "example: vs the block")
+check("get_neighborhood_context" in tools_used(s), f"the neighborhood example should call get_neighborhood_context (called {tools_used(s)})")
+
 print("\n" + ("ALL CHECKS PASSED" if not problems else f"{len(problems)} PROBLEMS:\n- " + "\n- ".join(problems)))

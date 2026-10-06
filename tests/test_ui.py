@@ -34,7 +34,7 @@ def main():
 
         # 2. The × detaches it, on the page and on the server.
         page.click("#attach-chip .chip-x")
-        assert not page.is_visible("#attach-chip")
+        page.wait_for_selector("#attach-chip", state="hidden", timeout=10_000)  # after the server confirms
         assert page.request.get(f"{BASE}/session").json()["lease"]["attached"] is False
         print("ok  × removes the lease")
 
@@ -51,8 +51,8 @@ def main():
 
         # 4. New search clears the chip and the session's lease.
         page.click("#new-search")
-        page.wait_for_timeout(500)
-        assert not page.is_visible("#attach-chip") and page.locator(".msg").count() == 0
+        page.wait_for_selector("#attach-chip", state="hidden", timeout=10_000)
+        assert page.locator(".msg").count() == 0
         assert page.request.get(f"{BASE}/session").json()["lease"]["attached"] is False
         print("ok  New search clears the lease")
 
@@ -82,6 +82,43 @@ def main():
         stranger.wait_for_selector("#resume-error >> text=No session found with that ID")
         assert stranger.locator(".msg").count() == 0
         print("ok  ?session= resumes for the same visitor, refused for another")
+        # 8. "What I can check": exactly the tools the model has; a row drafts its question, unsent.
+        page = browser.new_context().new_page()
+        chats.clear()
+        page.on("request", lambda r: r.url.endswith("/chat") and chats.append(r.url))
+        page.goto(BASE)
+        served = page.request.get(f"{BASE}/tools").json()
+        page.click("#capabilities summary")
+        rows = page.locator("#cap-rows tr.cap-row")
+        assert rows.count() == len(served) == 12, rows.count()
+        listed = [page.locator("#cap-rows tr.cap-row .fn").nth(i).inner_text().rstrip("()") for i in range(12)]
+        assert listed == [t["name"] for t in served], listed
+        sun = next(i for i, t in enumerate(served) if t["name"] == "estimate_sunlight")
+        rows.nth(sun).click()
+        assert page.input_value("#input") == served[sun]["example"] and not chats
+        print("ok  'What I can check' lists exactly the 12 tools; a row drafts its question without sending")
+
+        # 9. The / menu opens, filters, and picking an item drafts its question without sending.
+        page.fill("#input", "")
+        page.type("#input", "/")
+        page.wait_for_selector("#slash button")
+        assert page.locator("#slash button").count() == 12
+        page.type("#input", "sun")
+        assert 1 <= page.locator("#slash button").count() < 12
+        assert "Sunlight" in page.locator("#slash button").first.inner_text(), "name matches rank first"
+        page.locator("#slash button").first.click()
+        assert page.input_value("#input") == served[sun]["example"] and page.is_hidden("#slash") and not chats
+        page.fill("#input", "")
+        page.type("#input", "/night")
+        page.keyboard.press("Enter")  # Enter picks from the menu; it never sends
+        night = next(t for t in served if t["name"] == "night_walk_check")
+        assert page.input_value("#input") == night["example"] and not chats
+        page.fill("#input", "")
+        page.type("#input", "/zzz")
+        assert "No check matches" in page.inner_text("#slash")
+        page.keyboard.press("Escape")
+        assert page.is_hidden("#slash")
+        print("ok  / menu opens, filters, and picking (click or Enter) fills the input without sending")
         browser.close()
     print("All UI tests passed.")
 

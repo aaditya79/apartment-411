@@ -277,6 +277,12 @@ def index():
     return FileResponse(Path(__file__).parent / "index.html")
 
 
+@app.get("/tools")
+def tool_list():
+    """What the agent can check, for the UI's panel and / menu (examples draft a question; they call nothing)."""
+    return tools.tool_catalog()
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, response: Response, http: Request, a411_session: str | None = Cookie(default=None)):
     # Get or create the session (the body's ID wins; the cookie resumes after a refresh)

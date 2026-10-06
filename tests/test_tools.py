@@ -65,6 +65,18 @@ def test_new_address_in_message_switches_building_first():
     assert "hasn't been looked up" in r.get("error", ""), r
 
 
+def test_catalog_matches_tools():
+    """The UI's panel and / menu list exactly the tools the model has, each with an example."""
+    from fastapi.testclient import TestClient
+    from tools import TOOLS, TOOL_CATALOG
+    names = [t["function"]["name"] for t in TOOLS]
+    assert len(names) == 12 and set(TOOL_CATALOG) == set(names), set(TOOL_CATALOG) ^ set(names)
+    served = TestClient(app.app).get("/tools").json()
+    assert [t["name"] for t in served] == names
+    assert all(t["label"] and t["answers"] and t["data"] and t["example"] for t in served)
+    assert sum(t["original"] for t in served) == 6
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

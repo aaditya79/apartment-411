@@ -16,17 +16,6 @@ It's built for someone about to sign a lease in NYC, or a current tenant whose l
 
 **Live:** see `deploy_url` in [`submission.json`](submission.json) (Columbia login via IAP). The first query after a quiet spell can take up to a minute while city data loads.
 
-## Why I built it
-
-I ran the first prototype on my own building:
-- **Open violations:** smoke and carbon-monoxide detector violations open since March 2020, with repairs taking a median of about 6 months.
-- **Rats:** failed rat inspections.
-- **Landlord:** a head officer with 15 other buildings, some far worse.
-
-That matched my experience: a landlord who's hard to reach and slow to make repairs.
-
-The sunlight model surprised me. My street-side windows, which face northwest onto the street, only get afternoon sun. I had assumed I got morning sun, but that was light reflected off the buildings across the street. ShadeMap agreed (see the validation below).
-
 ## Sample queries for graders
 
 Run these three in order, in one session:
@@ -40,11 +29,11 @@ What to expect:
 - **Query 2** reuses the landlord portfolio: the head officer is registered on 18 buildings, and this one ranks 4th worst of the 15 with 6+ apartments.
 - **Query 3** fact-checks the two claims. "Well-maintained" is not supported by city records: 9 open violations, one immediately hazardous, one open since 2009. "Sun-drenched" can't be verified: the 4th floor's south-facing street side gets about 2.8 h of direct sun today, the court side much less, so it depends which way the apartment faces.
 
-The start screen also has buttons for a fictional sample lease, a repair letter and the night walk.
+The start screen also has example buttons for the sunlight model, the neighborhood comparison, a fictional sample lease, a repair letter and the night walk.
 
 ## The tools
 
-There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. Each tool:
+There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. The app shows the same list under "What I can check" on the start screen, and typing `/` in the chat box opens it as a menu. Picking a check only drafts an example question into the input; the model still decides which tools to call. Each tool:
 - returns JSON with interpreted facts, their context (per apartment, vs the area, over what period) and a `note` with the caveat;
 - on failure, returns `{"error", "next_step"}` telling the model what to do next, never a stack trace;
 - takes an optional address, defaulting to the building being discussed, which the harness keeps in session state, so the model never handles city IDs.

@@ -1839,6 +1839,64 @@ TOOLS = [
     },
 ]
 
+# What the UI shows: the "What I can check" panel and the / menu. Examples only draft a question for
+# the chat; the model still decides which tools to call.
+DEMO = "155 East 92nd Street, Manhattan"
+TOOL_CATALOG = {
+    "look_up_building": {"label": "Building lookup", "original": False,
+                         "answers": "Which building is this? Size, age, type, HPD registration, registered owner and agent.",
+                         "data": "NYC GeoSearch, PLUTO, HPD registrations", "example": f"Look up {DEMO}"},
+    "check_maintenance_record": {"label": "Maintenance record", "original": False,
+                                 "answers": "Does the landlord fix things? Open violations by hazard class and how long they stay open.",
+                                 "data": "HPD violations", "example": f"Does the landlord at {DEMO} fix things?"},
+    "get_tenant_complaints": {"label": "Tenant complaints", "original": False,
+                              "answers": "What do tenants complain about? Complaints since 2023 by category and month.",
+                              "data": "HPD complaints", "example": f"What do tenants at {DEMO} complain about?"},
+    "check_pests": {"label": "Rats & bedbugs", "original": False,
+                    "answers": "Failed rat inspections and the owner's bedbug filings.",
+                    "data": "Health Dept. rodent inspections, HPD bedbug filings",
+                    "example": f"Any rats or bedbugs at {DEMO}?"},
+    "check_evictions_and_court": {"label": "Evictions & court", "original": False,
+                                  "answers": "Marshal evictions and HPD housing-court cases, in plain English.",
+                                  "data": "Evictions, HPD litigation",
+                                  "example": f"Any evictions or housing-court cases at {DEMO}?"},
+    "get_landlord_portfolio": {"label": "Landlord's other buildings", "original": False,
+                               "answers": "Who's behind the LLC, and how do they run their other buildings?",
+                               "data": "HPD registrations and contacts, PLUTO, snapshot",
+                               "example": f"Who owns {DEMO}, and how do they treat tenants in their other buildings?"},
+    "get_neighborhood_context": {"label": "Vs. the neighborhood", "original": True,
+                                 "answers": "Is this building better or worse than its block? Percentiles against nearby rentals.",
+                                 "data": "PLUTO, HPD registrations, citywide snapshot",
+                                 "example": f"Is {DEMO} worse than its block?"},
+    "draft_repair_request": {"label": "Repair letter", "original": True,
+                             "answers": "A firm repair letter citing the city's own open violations, plus escalation steps.",
+                             "data": "HPD violations and registration",
+                             "example": f"I live at {DEMO}, Apt 18. My bathroom ceiling has been leaking for months. "
+                                        "Write a letter to my landlord."},
+    "estimate_sunlight": {"label": "Sunlight model", "original": True,
+                          "answers": "How much direct sun does a window get, by side, floor and season?",
+                          "data": "Building footprints and heights, NOAA sun position",
+                          "example": f"How much direct sun does a 4th-floor apartment at {DEMO} get?"},
+    "fact_check_listing": {"label": "Listing fact-check", "original": True,
+                           "answers": "Do a listing's claims (sunny, well-maintained, quiet…) hold up in city records?",
+                           "data": "The tools above, 311 noise complaints",
+                           "example": "The listing says 'sun-drenched 4th floor in a well-maintained building' for "
+                                      "155 East 92nd Street. Is that true?"},
+    "review_lease": {"label": "Lease review", "original": True,
+                     "answers": "Does your lease follow NY rules, and does it match city records? (Attach it with 📎.)",
+                     "data": "Your lease, NY/NYC law pages, HPD", "example": "Review my lease"},
+    "night_walk_check": {"label": "Night walk", "original": True,
+                         "answers": "Reported street incidents on the walk home from the subway at night, vs. similar walks.",
+                         "data": "NYPD complaints and shootings, MTA stations",
+                         "example": f"How safe is the walk home from the subway at night to {DEMO}?"},
+}
+
+
+def tool_catalog() -> list[dict]:
+    """The catalog in the order the model sees the tools."""
+    return [{"name": t["function"]["name"], **TOOL_CATALOG[t["function"]["name"]]} for t in TOOLS]
+
+
 # What the harness runs: tool name -> Python function.
 TOOL_MAP = {
     "look_up_building": look_up_building,
