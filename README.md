@@ -14,7 +14,7 @@ Then it helps you act: it drafts a repair letter that cites the city's own open 
 
 It's built for someone about to sign a lease in NYC, or a current tenant whose landlord is slow to make repairs. Everything it says comes from public city records through tool calls, and every tool call is shown in the chat with its arguments and result.
 
-**Live:** see `deploy_url` in [`submission.json`](submission.json) (Columbia login via IAP).
+**Live:** see `deploy_url` in [`submission.json`](submission.json) (Columbia login via IAP). The first query after a quiet spell can take up to a minute while city data loads.
 
 ## Why I built it
 
@@ -182,8 +182,18 @@ Cloud Run (us-east1), with continuous deploy from this repo's `main` branch:
 - **Build:** Google Cloud's buildpacks, entrypoint `uvicorn app:app --host 0.0.0.0 --port $PORT`.
 - **Access:** Identity-Aware Proxy for columbia.edu.
 - **Secrets:** `NYC_OPEN_DATA_APP_TOKEN` is read from Secret Manager, never committed.
-- **Instances:** min instances 1, max instances 1, with CPU always allocated. Sessions are in memory, so the service needs a single instance, and the always-allocated CPU keeps the cache-warming thread running.
+- **Instance:** 1 vCPU and 512 MiB (the server peaked at ~330 MB with 3 parallel sessions and a PDF lease review), min instances 1, max instances 1, CPU always allocated.
 
-**Cost:** 1 vCPU + 1 GiB, always on, is about **$47/month** (≈ $1.55/day) at Cloud Run's instance-based rates ($0.000018/vCPU-s, $0.000002/GiB-s, after the monthly free tier), plus a little for Gemini calls.
+Why those settings:
+- **One instance:** sessions are in memory, so there must be exactly one instance.
+- **Always-on CPU:** keeps the cache-warming thread running, so the graders' first queries are fast.
+- **Not less than 1 vCPU:** Cloud Run only allows that with request-based billing and a concurrency of 1, which would make a second visitor wait for the first.
 
-> **Reminder: after grades are released, set min instances to 0 (or delete the service) to stop the charge.**
+**Cost:** about **$44/month** (≈ $1.47/day) at Cloud Run's instance-based rates ($0.000018/vCPU-s, $0.000002/GiB-s, after the monthly free tier), plus a little for Gemini calls.
+
+> **After grades are released, set min instances to 0 (or delete the service) to stop the always-on charge.**
+
+## Submission
+
+- **Repo:** submitted on Courseworks. It's private, so the course assistants who grade it (codeboi07, bhuvighosh3, nniishhh, x) are added as GitHub collaborators. They are graders, not team members.
+- **Authors:** I'm working solo, so [`submission.json`](submission.json) lists one author: `aup2005`.

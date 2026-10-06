@@ -223,6 +223,7 @@ svg text { font-family: var(--mono); }
         <button type="submit" class="send-btn" id="send">Ask</button>
       </div>
       <div class="hint">Enter to send · Shift+Enter for a new line · 📎 attach a lease (PDF or .txt)</div>
+      <div class="hint first-load" id="first-load">First query may take up to a minute while city data loads.</div>
     </form>
   </section>
 
@@ -302,6 +303,7 @@ async function newSearch() {
   const body = await r.json().catch(() => ({}));
   $("messages").innerHTML = "";
   $("start").hidden = false;
+  $("first-load").hidden = false;
   for (const k of Object.keys(files)) delete files[k];
   fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
   renderPanel();
@@ -388,6 +390,7 @@ async function send(message) {
   message = message.trim();
   if (!message || busy) return;
   $("start").hidden = true;
+  $("first-load").hidden = true;
   addUser(message);
   $("input").value = ""; autosize();
   setBusy(true);
@@ -742,6 +745,7 @@ $("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => { con
     setSession(r.session_id);
     if (r.history?.length) {
       $("start").hidden = true;
+      $("first-load").hidden = true;
       for (const m of r.history) m.role === "user" ? addUser(m.content) : addBot(m.content, []);
       absorb(r.tool_calls || []);
     }
