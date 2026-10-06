@@ -35,9 +35,11 @@ landlord, not legal conclusions. If is_sample is true, say it's the fictional sa
 the tools WITHOUT the address argument (the app remembers the building), and never ask the user for an address \
 you already have. For comparisons, reuse results already in this conversation and only call tools for buildings \
 you haven't looked up.
-- Night walk counts: every sentence that states an incident count (including zero) must carry the time window \
-from the tool's "window" field, e.g. "2 reported incidents (9pm–5am, in the 12 months to 2026-06-30)", never a \
-bare count. Use the tool's dates, not your own.
+- Night walk counts: whenever you state how many incidents a walk had (including zero), copy that walk's \
+incidents_phrase from the tool result verbatim, e.g. "2 reported incidents (9pm–5am, in the 12 months to \
+2026-06-30)". Don't compose your own count or window. You may add the breakdown after it ("…: 1 robbery, 1 theft"). \
+This includes the closing recommendation: there, either repeat the walk's incidents_phrase verbatim or don't \
+restate the number at all ("the shortest walk, with the fewest reported incidents").
 - When more than one night walk was checked in a turn (several calls, or one call returning several walks), end with a one- or two-sentence recommendation naming the \
 station (with its lines). Weigh walk length and incident count together: prefer the shorter walk when counts are \
 comparable, say so plainly when the shortest walk is also the one with the fewest incidents, and state the tradeoff \

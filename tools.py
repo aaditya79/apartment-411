@@ -1616,8 +1616,9 @@ def walk_report(b: nyc.Building, st: dict, after_hour: int, snap: dict, state: d
     hours = f"{after_hour - 12}pm-5am"
     window_phrase = f"{after_hour - 12}pm–5am, in the 12 months to {window[1]}"
     by_type = dict(Counter(label(p[4]) for p in on_route).most_common())
-    summary = (f"{n} reported street incident{'s' if n != 1 else ''} ({window_phrase}) along the ~{minutes}-min walk "
-               f"from {station_label(st)}; "
+    # The exact words to use for this walk's count, window included, so no answer can state a bare count.
+    incidents_phrase = f"{n} reported incident{'s' if n != 1 else ''} ({window_phrase})"
+    summary = (f"{incidents_phrase} along the ~{minutes}-min walk from {station_label(st)}; "
                f"of similar-length walks from NYC stations, {share_with_more(baseline)}% had more and "
                f"{share_with_same(baseline)}% had the same number.")
     result = {
@@ -1627,8 +1628,9 @@ def walk_report(b: nyc.Building, st: dict, after_hour: int, snap: dict, state: d
                  "route_lat_lon": [[round(start[0], 6), round(start[1], 6)], [round(end[0], 6), round(end[1], 6)]]},
         "hours_checked": hours,
         "period": {"from": window[0], "to": window[1]},
-        "window": window_phrase,  # quote this with every incident count: the NYPD lag moves the end date
+        "window": window_phrase,  # the NYPD lag moves the end date, so it's always the tool's own period
         "incidents_on_route": n,
+        "incidents_phrase": incidents_phrase,  # use verbatim whenever stating this walk's count
         "by_type": by_type,
         "where_on_route": dict(thirds),
         "comparison": {
