@@ -27,8 +27,8 @@ def test_unregistered_building_stays_selected():
     assert pests["rodent_inspections_since_2023"]["inspections"] >= 0  # Health Dept. data still applies
     sun = json.loads(run_tool("estimate_sunlight", {}, state))
     assert "error" not in sun and sun["winter_sun_by_floor"], sun
-    walk = json.loads(run_tool("night_walk_check", {}, state))
-    assert "error" not in walk and walk["station"]["name"], walk
+    walk = json.loads(run_tool("night_walk_check", {}, state))  # no line: every walkable station
+    assert "error" not in walk and walk["walks"] and all(w["station"]["name"] and w["window"] for w in walk["walks"]), walk
     area = json.loads(run_tool("get_neighborhood_context", {}, state))
     assert "error" not in area and area["open_violations_per_apartment"]["this_building"] is None, area
     assert area["open_violations_per_apartment"]["this_building_vs_area"].startswith("not compared"), area
