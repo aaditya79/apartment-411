@@ -140,6 +140,22 @@ check(r.status_code == 200 and r.json()["is_sample"], "pdf upload")
 s = chat("Review my lease, money terms only", r.json()["session_id"], "lease: uploaded PDF")
 check("review_lease" in tools_used(s), "should review the uploaded PDF")
 
+print("\n=== not a lease: a research paper attached as 'the lease'")
+sid = fresh()
+chat("Look up 41 Tiemann Place, Manhattan", sid, "not a lease: building in the chat")
+paper = text_to_pdf((Path(__file__).parent / "fixtures" / "research_paper.txt").read_text(), "", "")
+r = BROWSER.post(f"{BASE}/upload", files={"file": ("paper.pdf", paper, "application/pdf")}, data={"session_id": sid}, timeout=60)
+check(r.status_code == 200, f"the upload itself is accepted ({r.status_code})")
+s = chat("look through the attached lease", sid, "not a lease: review")
+reviews = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "review_lease"]
+check(bool(reviews) and all("doesn't look like a residential lease" in r.get("error", "") for r in reviews),
+      "review_lease must return the not-a-lease error")
+check(not re.search(r"bed ?bug|window guard|lead.?paint|sprinkler|\bflags?\b", s["response"], re.IGNORECASE),
+      "no flags or missing-disclosure findings for a non-lease")
+check("Tiemann" not in s["response"], "the document must not be labelled with the conversation's building")
+check(bool(re.search(r"(isn't|is not|doesn't|does not)[^.]{0,40}(lease)", s["response"], re.IGNORECASE)),
+      "the answer should say plainly the file isn't a lease")
+
 print("\n=== lease: bad uploads")
 for name, data, ctype, want in [("scan.pdf", b"%PDF-1.4 not really", "application/pdf", 422),
                                 ("photo.png", b"\x89PNG....", "image/png", 415),
@@ -162,7 +178,9 @@ for question, tool in [("is the area safe", "night_walk_check"), ("how much sun"
     calls = [c for c in s["tool_calls"] if c["name"] == tool]
     # Either the tool runs now, without an address, or its result is already in this conversation.
     check(bool(calls) or tool in already, f"'{question}' should call {tool} or reuse it (called {tools_used(s)})")
-    check(all("address" not in c["args"] for c in calls), f"'{question}': {tool} should be called without an address")
+    # The model may pass the selected building's address explicitly; never a different building.
+    check(all("2053 frederick douglass" in c["args"].get("address", "2053 frederick douglass").lower() for c in calls),
+          f"'{question}': {tool} should use the building already selected")
     check("street address" not in s["response"].lower(), f"'{question}' must not ask for the address again")
     already |= set(tools_used(s))
 
@@ -202,6 +220,17 @@ check(not any("letter_text" in r for r in letters), "no letter may be drafted be
 check("following conditions in my home" not in s["response"], "the answer must not contain a letter asserting conditions")
 check(bool(re.search(r"\?|tell me|let me know|what('s| is) (wrong|the problem)", s["response"], re.IGNORECASE)),
       "the agent should ask what needs repairing")
+
+# --- Casual wording, reworded by the model: still a letter ---
+print("\n=== repair letter: casual wording")
+sid = fresh()
+chat("Look up 155 East 92nd Street, Manhattan", sid, "repair casual: building")
+s = chat("my fridge keeps dying and the bathroom ceiling is gross. can you write a letter to my landlord?", sid,
+         "repair casual: letter")
+letters = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "draft_repair_request"]
+check(any("letter_text" in r for r in letters), "a stated problem in casual words must produce a letter")
+check(not re.search(r"smoke|carbon monoxide|mold|roach|mice", " ".join(r.get("letter_text", "") for r in letters),
+                    re.IGNORECASE), "the letter must not add conditions the tenant never mentioned")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")

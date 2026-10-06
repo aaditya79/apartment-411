@@ -1,0 +1,16 @@
+Rent Burden and Mobility Among New York City Tenants, 2015-2023
+
+Abstract
+Using household survey data, we examine how rent burden affects residential mobility among tenants in New York City. Tenants paying more than half their income in rent were 1.7 times as likely to move within two years. Landlords in rent-stabilized buildings filed for eviction less often than landlords in market-rate buildings, though the gap narrowed after 2019.
+
+1 Data
+We use the Housing and Vacancy Survey for 2017, 2021 and 2023. Median monthly rent for a one-bedroom apartment rose from $1,450 to $1,780 in real terms. We match apartments to building records by tax lot.
+
+2 Findings
+Rent burden rose fastest in the Bronx. Tenants who moved most often cited cost; a smaller share cited conditions such as heat or leaks. Landlords of small buildings were less likely to register with the city.
+
+3 Policy
+Rent stabilization slowed turnover. Right-to-counsel in housing court reduced eviction judgments among tenants with representation.
+
+References
+Furman Center (2023). State of New York City's Housing and Neighborhoods.

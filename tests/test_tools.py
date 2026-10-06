@@ -89,7 +89,7 @@ def test_repair_letter_only_states_what_the_tenant_said():
     # Conditions taken from building records, not from the tenant: refused.
     r = json.loads(run_tool("draft_repair_request", {"issues": ["water_leak", "safety"],
                    "details": "Water leak at ceiling in the bathroom, and smoke/carbon monoxide detectors needing repair"}, state))
-    assert "own description" in r.get("error", ""), r
+    assert "hasn't mentioned" in r.get("error", "") and "smoke detector" in r["error"], r
 
     # The tenant's own words: the letter states exactly those; violations appear only as supporting records.
     state["user_messages"].append("My bathroom ceiling has been leaking since June")
@@ -105,6 +105,24 @@ def test_repair_letter_only_states_what_the_tenant_said():
     r = json.loads(run_tool("draft_repair_request", {"issues": ["elevator"], "details": "the elevator is broken"}, state))
     assert "HPD has no open violation on record matching these conditions" in r["letter_text"], r["letter_text"]
     assert "City records support this" not in r["letter_text"]
+
+
+def test_repair_letter_allows_rewording_but_not_new_conditions():
+    state = {"user_messages": ["Look up 155 East 92nd Street, Manhattan",
+                               "my fridge keeps dying and the bathroom ceiling is gross",
+                               "can you write a letter to my landlord"]}
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+    # The model's natural rewording of what the tenant said: a letter.
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["appliance", "water_leak"],
+                   "details": "refrigerator not maintaining temperature; water damage at the bathroom ceiling"}, state))
+    assert "letter_text" in r, r
+    assert "refrigerator not maintaining temperature" in r["letter_text"]
+    # The building's ceiling-leak violation is in another apartment: not cited, and not denied either.
+    assert "HPD has no open violation" not in r["letter_text"], r["letter_text"]
+    # A condition the tenant never mentioned (from the building's records): refused, naming it.
+    r = json.loads(run_tool("draft_repair_request", {"issues": ["appliance", "safety"],
+                   "details": "refrigerator not maintaining temperature; smoke detector missing"}, state))
+    assert "smoke detector" in r.get("error", "") and "letter_text" not in r, r
 
 
 if __name__ == "__main__":

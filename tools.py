@@ -738,15 +738,23 @@ def matching_violations(open_rows: list[dict], issues: list[str], apartment: str
     return cite, elsewhere
 
 
-STOP_WORDS = {"about", "after", "again", "also", "been", "being", "from", "have", "having", "here", "into", "just",
-              "like", "more", "need", "needs", "please", "some", "that", "their", "them", "there", "they", "this",
-              "very", "were", "what", "when", "where", "which", "will", "with", "would", "your", "since", "still",
-              "write", "letter", "landlord", "request", "create", "make", "submit", "apartment", "building", "home"}
+# Things and places a repair letter can be about, with the words people use for them. A letter may reword
+# what the tenant said, but may not add one of these the tenant never mentioned.
+CONCEPTS = {
+    "fridge": r"fridge|refrigerat|freezer", "stove/oven": r"stove|oven|range|burner|cooktop", "ceiling": r"ceiling",
+    "wall": r"\bwalls?\b", "floor": r"\bfloor(s|ing)?\b", "window": r"window", "door": r"\bdoors?\b",
+    "lock": r"\blocks?\b|deadbolt", "toilet": r"toilet", "sink": r"\bsinks?\b", "tub/shower": r"bath ?tub|\btub\b|shower",
+    "bathroom": r"bathroom|\bbath\b", "kitchen": r"kitchen", "bedroom": r"bedroom", "heat": r"\bheat|radiator|boiler",
+    "hot water": r"hot water", "smoke detector": r"\bsmoke", "carbon monoxide detector": r"carbon monoxide|\bco detector",
+    "elevator": r"elevator", "intercom/buzzer": r"intercom|buzzer", "mold": r"\bmold|mildew", "mice/rats": r"\bmice\b|\bmouse\b|\brats?\b|rodent",
+    "roaches": r"roach|cockroach", "bedbugs": r"bed ?bugs?", "electrical": r"outlet|wiring|electric|light fixture|circuit",
+    "plumbing/pipes": r"\bpipes?\b|plumbing|drain", "gas": r"\bgas\b", "paint/plaster": r"paint|plaster", "stairs": r"stair",
+}
 
 
-def content_words(text: str) -> set[str]:
-    """Meaningful words, cut to 5 letters so 'leaking' matches 'leak' and 'ceilings' matches 'ceiling'."""
-    return {w[:5] for w in re.findall(r"[a-z]{4,}", (text or "").lower()) if w not in STOP_WORDS}
+def concepts(text: str) -> set[str]:
+    lowered = (text or "").lower()
+    return {name for name, pattern in CONCEPTS.items() if re.search(pattern, lowered)}
 
 
 def issues_seen_here(b: nyc.Building) -> list[str]:
@@ -773,14 +781,14 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
             "mention the kinds of problems HPD has open violations for in this building, as examples to choose "
             "from, not as their problem.",
             issues_recorded_in_this_building=issues_seen_here(b))
-    stated = content_words(said)
-    claimed = content_words(details)
-    unsupported = sorted(w for w in claimed if w not in stated)
-    if claimed and len(unsupported) > len(claimed) / 2:
+    # Block NEW conditions, not rewording: compare the things and places named (fridge, ceiling, smoke
+    # detector...), so "fridge keeps dying" can become "refrigerator not keeping temperature".
+    new_things = sorted(concepts(details) - concepts(said))
+    if new_things:
         raise ToolError(
-            "details must be the tenant's own description, but most of it isn't in anything they've said here.",
-            "Use only the problems the user described, in their words. If they haven't described one, ask them "
-            "what's wrong; don't take conditions from building records.",
+            f"details mentions {', '.join(new_things)}, which the tenant hasn't mentioned in this conversation.",
+            "Use only the problems the user described. If they haven't mentioned it, don't include it; ask them if "
+            "you think it applies. Never take conditions from building records.",
             issues_recorded_in_this_building=issues_seen_here(b))
     if not issues:
         raise ToolError("No issues given.", f"Pass one or more of: {', '.join(ISSUE_KEYWORDS)}.")
@@ -808,6 +816,9 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
                          f"{short_date(v.get('inspectiondate'))}): {t['what'][:180]}"
                          + (f" [{t['code_section']}]" if t["code_section"] else ""))
         lines.append("")
+    elif elsewhere:
+        # Matching violations exist, but in other apartments: true of the building, not proof about this home.
+        lines += ["I am reporting these conditions to you directly.", ""]
     else:
         lines += ["HPD has no open violation on record matching these conditions yet, so I am reporting them to you "
                   "directly.", ""]
@@ -1323,11 +1334,22 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     if focus not in LEASE_FOCUS:
         raise ToolError(f"Unknown focus '{focus}'.", "Use one of: all, money, terms, disclosures, city_records.")
 
+    # Only a document established as a lease is reviewed: a research paper "missing" a bedbug disclosure
+    # isn't a finding.
+    kind, missing_markers = lease.document_type(text)
+    if kind == "not_lease":
+        raise ToolError(
+            "This document doesn't look like a residential lease: I expected to find "
+            + " and ".join(missing_markers[:2]) + ", and found " + ("neither" if len(missing_markers) > 1 else "none") + ".",
+            "Tell the user plainly that the attached file isn't a lease, and ask them to attach or paste the lease "
+            "itself. Don't give general lease advice instead.",
+            document_type="not a lease", markers_not_found=missing_markers)
+
     facts = lease.extract(text)
     flags = lease.check_consistency(facts) + lease.check_rules(facts)
 
-    # The building: the lease's premises address (best-scoring candidate that the city geocoder
-    # accepts), else the building being discussed. A landlord's office address scores low.
+    # The building: the address IN THE DOCUMENT (best-scoring premises candidate the city geocoder accepts).
+    # Never the building from the conversation: a mismatch between the two is exactly what to catch.
     b, context, building_note, tried = None, {}, None, []
     for candidate in facts["address_candidates"]:
         if candidate["why"].endswith("zip outside NYC"):
@@ -1335,10 +1357,10 @@ def review_lease(state: dict, focus: str = "all") -> dict:
             continue
         for variant in lease.address_variants(candidate["address"]):
             try:
-                b = current_building(variant, state)
+                b = nyc.resolve_building(variant)
                 building_note = f"Used the premises address '{variant}' ({candidate['why']})."
                 break
-            except ToolError:
+            except DataSourceError:
                 tried.append(variant)
         if b:
             break
@@ -1354,20 +1376,19 @@ def review_lease(state: dict, focus: str = "all") -> dict:
         if outside:
             building_note += (f" {outside} address{'es' if outside > 1 else ''} outside NYC (such as the landlord's "
                               f"office or a tenant's mailing address) {'were' if outside > 1 else 'was'} ignored.")
+    discussed = state.get("buildings", {}).get(state.get("current_bbl"))
     if not b:
-        try:
-            b = current_building(None, state)
-            nyc_tried = [t for t in dict.fromkeys(tried) if "(outside NYC)" not in t]
-            building_note = ("No address in the lease matched an NYC building"
-                             + (f" (tried: {'; '.join(nyc_tried)})" if nyc_tried else "")
-                             + f"; used the building being discussed, {b.label}.")
-        except ToolError as e:
-            nyc_tried = [t for t in dict.fromkeys(tried) if "(outside NYC)" not in t]
-            building_note = (f"City-record checks skipped: no NYC building address found in the lease"
-                             + (f" (tried: {'; '.join(nyc_tried)})" if nyc_tried else "") + f". {e.next_step}")
+        nyc_tried = [t for t in dict.fromkeys(tried) if "(outside NYC)" not in t]
+        building_note = ("The document has no NYC street address we could match"
+                         + (f" (tried: {'; '.join(nyc_tried)})" if nyc_tried else "")
+                         + ", so city-record checks were skipped. The building discussed earlier was not assumed.")
+    elif discussed and discussed.bbl != b.bbl:
+        building_note += (f" Note: this lease is for {b.label}, not {discussed.label}, the building discussed earlier "
+                          "in this conversation.")
     if b:
         try:
-            record_flags, context = check_against_records(facts, b, state)
+            # The lease's building gets its own state, so the review never switches the conversation's building.
+            record_flags, context = check_against_records(facts, b, {"buildings": {b.bbl: b}, "current_bbl": b.bbl})
             flags += record_flags
         except DataSourceError:
             building_note = "City-record checks skipped: NYC Open Data didn't respond."
@@ -1381,12 +1402,19 @@ def review_lease(state: dict, focus: str = "all") -> dict:
                  for k, v in facts.items() if k not in ("heat_clauses", "rent_mentions", "disclosures_present")}
     extracted["rents_stated"] = [m["amount"] for m in facts["rent_mentions"]]
     extracted["address_candidates"] = [c for c in facts["address_candidates"] if "outside NYC" not in c["why"]]
+    # A disclosure can only be "missing" from a document established as a whole lease.
+    disclosures = (lease.missing_disclosures(facts, b.units if b else None, b.year_built if b else None)
+                   if kind == "lease" else [])
     return {
+        "document_type": "lease" if kind == "lease" else "part of a lease",
+        **({"document_note": "This looks like part of a lease (a rider or an extract), not a whole lease: the clauses "
+                             "below were reviewed, but required disclosures can't be judged from it."}
+           if kind == "partial" else {}),
         "address": b.label if b else None,
         "is_sample": lease.is_sample(text),
         "flag_counts": {sev: sum(f["severity"] == sev for f in flags) for sev in order},
         "flags": flags,
-        "missing_disclosures": lease.missing_disclosures(facts, b.units if b else None, b.year_built if b else None),
+        "missing_disclosures": disclosures,
         "extracted": extracted,
         "city_record_context": context,
         "building_note": building_note,

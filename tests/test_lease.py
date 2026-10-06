@@ -87,7 +87,9 @@ def lease_with(clause: str, rent: str = "$3,000.00") -> str:
     """A minimal lease (no address, so only the rule checks run) around one clause under test."""
     return (f"RESIDENTIAL LEASE between Example Realty LLC (\"Landlord\") and Sam Tenant (\"Tenant\").\n\n"
             f"1. RENT. Tenant shall pay monthly rent of {rent}, due on the first day of each month.\n\n"
-            f"2. {clause}\n\nTHERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN THE LEASED PREMISES.\n")
+            f"2. {clause}\n\nTHERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN THE LEASED PREMISES.\n\n"
+            f"3. TERM. The term begins on March 1, 2026 and ends on February 28, 2027.\n\n"
+            f"Landlord signature: ____________    Tenant signature: ____________\n")
 
 
 def money_flags(clause: str, rule_words: str) -> list[dict]:
@@ -187,6 +189,57 @@ def test_deposit_not_stated_is_a_question():
     assert "isn't stated" in deposit[0]["explanation"], deposit
 
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def review_pdf_of(name: str, state: dict) -> dict:
+    """The file goes through the same path as an upload: written as a PDF, then text-extracted."""
+    import lease
+    from tests.make_pdf import text_to_pdf
+    state["lease_text"] = lease.pdf_to_text(text_to_pdf((FIXTURES / name).read_text(), "", ""))
+    return json.loads(run_tool("review_lease", {}, state))
+
+
+def test_not_a_lease_is_refused():
+    """A research paper attached as 'the lease': a named error, nothing reviewed, no borrowed address."""
+    state = {}
+    run_tool("look_up_building", {"address": "41 Tiemann Place, Manhattan"}, state)  # a building in the chat
+    for name in ("research_paper.txt", "housing_paper.txt"):  # the second talks about landlords, tenants and rent
+        r = review_pdf_of(name, state)
+        assert r.get("error", "").startswith("This document doesn't look like a residential lease"), r
+        assert "found neither" in r["error"] and "isn't a lease" in r["next_step"], r
+        for key in ("flags", "flag_counts", "missing_disclosures", "address", "building_note"):
+            assert key not in r, (name, key)
+        assert "Tiemann" not in json.dumps(r), "the conversation's building must not label the document"
+
+
+def test_part_of_a_lease():
+    """A one-page rider: reviewed, but flagged up front as part of a lease, with no missing disclosures."""
+    r = review_pdf_of("pet_rider.txt", {})
+    assert "error" not in r, r
+    assert r["document_type"] == "part of a lease" and "part of a lease" in r["document_note"], r
+    assert r["missing_disclosures"] == [], r["missing_disclosures"]
+    assert r["address"] == "155 East 92 Street", r["building_note"]
+
+
+def test_address_comes_from_the_document():
+    # A lease for another building than the one discussed: labelled by the lease, the mismatch named,
+    # and the conversation's building left as it was.
+    state = {}
+    run_tool("look_up_building", {"address": "41 Tiemann Place, Manhattan"}, state)
+    before = state["current_bbl"]
+    state["lease_text"] = SAMPLE.read_text()
+    r = json.loads(run_tool("review_lease", {}, state))
+    assert r["address"] == "155 East 92 Street" and r["document_type"] == "lease", r["address"]
+    assert "not 41 Tiemann Place" in r["building_note"] and "discussed earlier" in r["building_note"], r["building_note"]
+    assert state["current_bbl"] == before, "reviewing a lease must not switch the building being discussed"
+    # A lease with no address: no address, said plainly, and the discussed building is not borrowed.
+    state["lease_text"] = lease_with("LATE FEE. A late charge of $50 applies after the 5th day.")
+    r = json.loads(run_tool("review_lease", {}, state))
+    assert r["address"] is None and "not assumed" in r["building_note"], r
+    assert "Tiemann" not in json.dumps(r)
+
+
 def test_no_lease():
     r = json.loads(run_tool("review_lease", {}, {}))
     assert r["error"].startswith("No lease"), r
@@ -217,5 +270,10 @@ if __name__ == "__main__":
     print("Form-style lease: deposit read as one month of rent, no rent/deposit mix-up, no false flags.")
     test_no_lease()
     test_scanned_pdf_message()
+    test_not_a_lease_is_refused()
+    test_part_of_a_lease()
+    test_address_comes_from_the_document()
+    print("A research paper (and a housing paper) is refused by name; a rider is reviewed as part of a lease with no "
+          "missing disclosures; the address comes only from the document, and a mismatch is named.")
     print("All lease tests passed.\n")
     print(json.dumps(result, indent=1)[:6000])

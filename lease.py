@@ -195,6 +195,56 @@ def docx_to_text(file) -> str:
     return text
 
 
+# --- Is this a lease at all? A simple, explainable rule, not a guess. ---
+
+LEASE_MARKERS = {
+    "the word 'lease'": r"\blease\b|rental agreement",
+    "a landlord (or lessor)": r"\blandlords?\b|\blessors?\b",
+    "a tenant (or lessee)": r"\btenants?\b|\blessees?\b",
+    "a rent amount": None,          # checked in code: "rent" near a dollar amount
+    "a lease term with dates": None,            # checked in code: commence/expire/begin/end near a date
+    "the premises": r"\bpremises\b|\bapartment\b|\bdemised\b|\bunit \w+",
+    "a security deposit": r"security deposit",
+    "a signature block": r"signature|\bsigned\b|\binitials?:|in witness whereof|executed",
+}
+
+
+def lease_markers(text: str) -> dict[str, bool]:
+    lowered = text.lower()
+    found = {name: bool(pattern and re.search(pattern, lowered)) for name, pattern in LEASE_MARKERS.items()}
+    found["a rent amount"] = any(
+        MONEY.search(lowered[max(0, m.start() - 80):m.end() + 80]) or
+        re.search(r"dollars", lowered[max(0, m.start() - 80):m.end() + 80])
+        for m in re.finditer(r"\brent\b", lowered))
+    found["a lease term with dates"] = any(
+        DATE.search(text[m.end():m.end() + 60])
+        for m in re.finditer(r"commenc\w*|expir\w*|begin\w*|beginning|ending|ends on|term of", text, re.IGNORECASE))
+    return found
+
+
+def document_type(text: str) -> tuple[str, list[str]]:
+    """('lease' | 'partial' | 'not_lease', markers not found).
+
+    lease: landlord, tenant, rent with an amount and a dated term, and at least 6 of the 8 markers.
+    partial: both parties, the word lease, two of premises / a security deposit / a signature block, and at
+             least 5 markers (a rider, an extract): reviewed, but required disclosures can't be judged.
+    not_lease: anything else; nothing is reviewed.
+    """
+    found = lease_markers(text)
+    missing = [name for name, ok in found.items() if not ok]
+    count = sum(found.values())
+    parties = found["a landlord (or lessor)"] and found["a tenant (or lessee)"]
+    if parties and found["a rent amount"] and found["a lease term with dates"] and count >= 6:
+        return "lease", missing
+    # A rider or extract still reads like a lease document: it says "lease" and has clause wording (premises,
+    # a deposit, a signature block), not just the vocabulary a paper about renting would use.
+    clause_like = sum(found[k] for k in ("a security deposit", "a signature block")) + bool(
+        re.search(r"\bpremises\b|\bdemised\b", text, re.IGNORECASE))
+    if parties and found["the word 'lease'"] and clause_like >= 2 and count >= 5:
+        return "partial", missing
+    return "not_lease", missing
+
+
 def is_sample(text: str) -> bool:
     """The demo lease, however it arrived (text, paste or PDF: extraction can change the dash)."""
     return "fictional sample" in text.lower()
