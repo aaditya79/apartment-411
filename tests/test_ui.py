@@ -176,6 +176,22 @@ def main():
         assert "Reported incidents, 9pm–5am, in the 12 months to " in card_text, card_text
         page.screenshot(path=str(Path(__file__).parent.parent / "scratch" / "shots" / "all_walks.png"))
         print(f"ok  all night-walk options: {routes} routes drawn, window shown on the card")
+        # 14. Progress is decoration: if /progress fails or says nothing, the answer still renders.
+        for mode in ("abort", "500", "empty"):
+            page = browser.new_context().new_page()
+            if mode == "abort":
+                page.route("**/progress**", lambda r: r.abort())
+            elif mode == "500":
+                page.route("**/progress**", lambda r: r.fulfill(status=500, body=""))
+            else:
+                page.route("**/progress**", lambda r: r.fulfill(status=200, body="{}", content_type="application/json"))
+            page.goto(BASE)
+            page.fill("#input", "Any rats or bedbugs at 155 East 92nd Street, Manhattan?")
+            page.click("#send")
+            page.wait_for_selector(".msg.bot .answer", timeout=180_000)
+            page.wait_for_timeout(300)
+            assert page.locator(".progress").count() == 0 and page.locator("#panel-skeleton").count() == 0, mode
+        print("ok  a failing or empty /progress never blocks or hides the answer")
         browser.close()
     print("All UI tests passed.")
 

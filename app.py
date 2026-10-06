@@ -114,7 +114,11 @@ def run_one(call, state: dict) -> tuple[dict, str]:
     except json.JSONDecodeError:
         return {}, json.dumps({"error": "Arguments were not valid JSON.",
                                "next_step": "Call the tool again with a JSON object of arguments."})
+    # What the page's loading state shows while /chat is still working (read via GET /progress).
+    step = {"name": call.function.name.strip(), "status": "running"}
+    state.setdefault("_progress", []).append(step)
     result = run_tool(call.function.name, args, state)
+    step["status"] = "error" if '"error"' in result[:40] else "done"
     print(f"tool {call.function.name.strip()} {time.time() - started:.1f}s", flush=True)
     return args, result
 
@@ -327,6 +331,7 @@ def chat(request: ChatRequest, response: Response, http: Request, a411_session: 
 
         # Append user's message to the context
         session["messages"] += [{"role": "user", "content": content}]
+        state["_progress"], state["_progress_running"] = [], True
 
         try:
             answer, tool_calls = run_agent(session["messages"], session["state"])
@@ -334,6 +339,7 @@ def chat(request: ChatRequest, response: Response, http: Request, a411_session: 
             # Auth, billing, a model that is not running: show it in the chat, not as a 500.
             answer, tool_calls = f"Model call failed: {type(e).__name__}: {str(e)[:300]}", []
         session["turns"].append({"user": request.message, "assistant": answer or "", "tool_calls": tool_calls})
+        state["_progress_running"] = False
 
     return ChatResponse(response=answer or "", session_id=session_id, tool_calls=tool_calls)
 
@@ -435,6 +441,17 @@ def session_view(session_id: str, session: dict) -> dict:
         "tool_calls": [c for t in turns for c in t["tool_calls"]],
         "lease": {"attached": bool(session["state"].get("lease_text")), "name": session["state"].get("lease_name")},
     }
+
+
+@app.get("/progress")
+def progress(http: Request, session_id: str | None = None, a411_session: str | None = Cookie(default=None)):
+    """Which tools the current turn has started and finished, for the page's loading state. Read-only:
+    /chat's request and response are unchanged."""
+    session = owned_session(session_id or a411_session, http.state.visitor)
+    if not session:
+        return {"running": False, "tools": []}
+    state = session["state"]
+    return {"running": bool(state.get("_progress_running")), "tools": list(state.get("_progress", []))}
 
 
 @app.get("/session")
