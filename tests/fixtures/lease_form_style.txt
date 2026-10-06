@@ -1,0 +1,44 @@
+[FICTIONAL SAMPLE — not a real lease]
+Anonymised test fixture in the layout of a form-style NYC lease (one field per line).
+Names and amounts are invented; the field wording matches the real form.
+
+LEASE FOR AN UNREGULATED APARTMENT
+This Lease is entered into on: 07/24/2025
+The Landlord is:
+(“The Landlord”)
+Sample Gardens LLC
+The Landlord’s address is: 40 Harbor Road, Suite 5, Great Neck NY  11021
+The Tenant is:
+( “The Tenant”)
+Alex Example
+The Tenant’s present address is: 12 Example Lane, Springfield, IL 62701
+The Apartment covered by
+This Lease is:
+( “The Apartment”)
+155 157 East 92nd Street, 4N, New York,NY 10128
+This lease is for a term of:   1 years 0  months 0 days
+This Lease commences on: 08/01/2025
+This Lease expires on: 07/31/2026
+The rent is: $4,100.00
+The amount of the security deposit is equal to one month of rent.
+The bank the security deposit is
+located in is:
+Example Bank 300 Sample Avenue
+
+6. The Rent
+a. The Rent for the Apartment is as stated above.
+g. If the Rent is less than $3,000, then the Tenant may establish direct payment (ACH Debit) where the
+amounts due under this Lease are automatically debited to the Tenant’s bank account. If the Rent is at
+least $3,000, then the Landlord and Tenant agree that payment of the Rent by ACH Debit is required.
+
+7. Late Charges
+a. For each month Rent is not received by the Landlord by the fifth day of the month in which it is due,
+the Tenant agrees to pay a reasonable late charge of the lesser of fifty (50) dollars or five percent
+(5%) of the rent.
+
+12. Security Deposit: The Landlord’s Rights
+a. The Tenant is required to keep on deposit with the Landlord at all times a Security Deposit equal to
+one month’s rent.
+
+THERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN THE LEASED PREMISES.
+The Landlord’s Name: Sample Gardens LLC

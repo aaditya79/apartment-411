@@ -211,10 +211,21 @@ def clauses(text: str) -> list[str]:
     """Split a lease into sentence-sized pieces, so each flag can quote its own clause."""
     pieces = []
     for paragraph in re.split(r"\n\s*\n", text):  # blank lines separate paragraphs
-        flat = re.sub(r"\s+", " ", paragraph).strip()  # join wrapped lines
-        if not flat or SAMPLE_LABEL in flat and len(flat) <= len(SAMPLE_LABEL) + 4:
-            continue  # the sample's "[FICTIONAL SAMPLE ...]" label lines aren't clauses
-        pieces += [p.strip() for p in re.split(r"(?<=[.;])\s+(?=[A-Z0-9(])", flat)]
+        # Join wrapped lines, but keep form-style fields apart: "The rent is: $6,250.00" on one line and
+        # "The amount of the security deposit is..." on the next are two statements, not one sentence.
+        lines = [ln.strip() for ln in paragraph.splitlines() if ln.strip()]
+        joined: list[str] = []
+        for line in lines:
+            ends_field = bool(joined) and re.search(r"[.:;!?)\]”\"]$|\d$", joined[-1])
+            if joined and not (ends_field and re.match(r"[A-Z(“\"\[]|\d+\.\s|[a-z]\.\s", line)):
+                joined[-1] = f"{joined[-1]} {line}"
+            else:
+                joined.append(line)
+        for flat in joined:
+            flat = re.sub(r"\s+", " ", flat).strip()
+            if not flat or SAMPLE_LABEL in flat and len(flat) <= len(SAMPLE_LABEL) + 4:
+                continue  # the sample's "[FICTIONAL SAMPLE ...]" label lines aren't clauses
+            pieces += [p.strip() for p in re.split(r"(?<=[.;])\s+(?=[A-Z0-9(])", flat)]
     # "8. ATTORNEY'S FEES." is a heading, not a clause: attach it to what follows.
     merged = []
     for p in pieces:
@@ -265,6 +276,35 @@ def percent_values(text: str) -> list[float]:
         if re.search(rf"\b{word}\s+(\(\d+%?\)\s*)?(?:percent|per cent)", text, re.IGNORECASE):
             found.append(float(value))
     return sorted(set(found))
+
+
+MONTHS_OF_RENT = re.compile(r"(\d+(?:\.\d+)?|" + "|".join(WORD_NUMBERS) + r"|a|one and a half)\s*(?:\(\d+\)\s*)?"
+                            r"months?(?:['’]s?)?\s*(?:of\s+(?:the\s+)?(?:monthly\s+)?)?rent", re.IGNORECASE)
+
+
+def months_of_rent(text: str) -> float | None:
+    """'one month of rent', 'one month’s rent', 'two (2) months' rent', '1 month rent' -> months."""
+    m = MONTHS_OF_RENT.search(text)
+    if not m:
+        return None
+    word = m.group(1).lower()
+    return 1.5 if word == "one and a half" else 1.0 if word == "a" else (
+        float(word) if word[0].isdigit() else float(WORD_NUMBERS[word]))
+
+
+# "If the Rent is less than $3,000, then..." names a threshold, not the rent.
+COMPARISON_BEFORE = re.compile(r"(less|more|greater|fewer) than|at (least|most)|exceeds?|over|under|below|above|"
+                               r"up to|minimum|maximum", re.IGNORECASE)
+
+
+def stated_amounts(text: str) -> list[float]:
+    """Dollar amounts that state a figure, skipping ones introduced as a comparison or threshold."""
+    out = []
+    for m in MONEY.finditer(text):
+        if COMPARISON_BEFORE.search(text[max(0, m.start() - 22):m.start()]):
+            continue
+        out.append(float(m.group(1).replace(",", "")))
+    return out
 
 
 def most_allowed(text: str, candidates: list[float]) -> tuple[float | None, str]:
@@ -386,7 +426,10 @@ def address_candidates(text: str) -> list[dict]:
         address = street + (f", {place.group(1)}" if place else "") + (f" {zip_match.group(1)}" if zip_match else "")
         out.append({"address": address, "unit": ((unit.group(1) or unit.group(2)).upper() if unit else None),
                     "score": score, "why": ", ".join(why) or "no context", "position": m.start()})
-    return sorted(out, key=lambda c: (-c["score"], c["position"]))
+    best: dict[str, dict] = {}  # the same address on several pages: keep its best-scoring mention
+    for c in sorted(out, key=lambda c: (-c["score"], c["position"])):
+        best.setdefault(re.sub(r"[^a-z0-9]", "", c["address"].lower()), c)
+    return list(best.values())
 
 
 # --- Extraction ---
@@ -397,35 +440,48 @@ def extract(text: str) -> dict:
     pieces = clauses(text)
     facts: dict = {}
 
-    rent_clauses = [p for p in find(pieces, r"\brent\b") if MONEY.search(p)
+    rent_clauses = [p for p in find(pieces, r"\brent\b") if stated_amounts(p)
                     and re.search(r"monthly rent|rent of|per month|a month|each month|rent (is|shall be)", p, re.IGNORECASE)
                     and not re.search(r"deposit|late|fee", p, re.IGNORECASE)]
-    facts["rent_mentions"] = [{"amount": money(p)[0], "clause": excerpt(p)} for p in rent_clauses]
+    facts["rent_mentions"] = [{"amount": stated_amounts(p)[0], "clause": excerpt(p)} for p in rent_clauses]
     facts["monthly_rent"] = facts["rent_mentions"][0]["amount"] if rent_clauses else None
 
+    # The deposit comes only from a sentence that names it. A month count ("equal to one month of rent")
+    # wins over any dollar figure; a sentence with neither leaves the amount unstated.
     deposit = clause_around(pieces, r"security deposit|\bdeposit\b|\bsecurity\b",
-                            need=lambda t: dollar_amounts(t) or re.search(r"months?'? rent", t, re.IGNORECASE),
-                            prefer=r"security|deposit")
+                            need=lambda t: dollar_amounts(t) or months_of_rent(t), prefer=r"security|deposit")
+    if not deposit:
+        deposit = clause_around(pieces, r"security deposit", prefer=r"security|deposit")
     if deposit:
-        amounts = dollar_amounts(deposit)
-        months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?months?'? rent", deposit, re.IGNORECASE)
-        facts["security_deposit"] = {"amount": max(amounts) if amounts else None, "_text": deposit,
-                                     "months_stated": (int(months.group(1)) if months.group(1).isdigit()
-                                                       else WORD_NUMBERS.get(months.group(1).lower())) if months else None,
-                                     "clause": excerpt(deposit)}
+        months = months_of_rent(deposit)
+        amounts = stated_amounts(deposit)  # only from the deposit sentence itself; the rule prefers months
+        facts["security_deposit"] = {"amount": max(amounts) if amounts else None, "months_stated": months,
+                                     "_text": deposit, "clause": excerpt(deposit)}
     deposit_return = clause_around(pieces, r"\breturn", need=lambda t: re.search(r"deposit|security", t, re.IGNORECASE))
     if deposit_return:
         facts["deposit_return_days"] = {"days": number_of_days(deposit_return), "clause": excerpt(deposit_return)}
 
-    term = find(pieces, r"\bterm\b|commenc|beginning|begins")
+    def date_after(pattern: str) -> date | None:
+        """The first date within a short distance after a keyword like 'commences on'."""
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            dates = parse_dates(text[m.end():m.end() + 45])
+            if dates:
+                return dates[0]
+        return None
+
+    term = clause_around(pieces, r"\bterm\b|commenc|beginning|begins", prefer=r"term")
     if term:
-        dates = parse_dates(term[0])
-        months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?[- ]?months?", term[0], re.IGNORECASE)
-        facts["term"] = {"start": dates[0].isoformat() if dates else None,
-                         "end": dates[1].isoformat() if len(dates) > 1 else None,
-                         "months_stated": (int(months.group(1)) if months.group(1).isdigit()
-                                           else WORD_NUMBERS.get(months.group(1).lower())) if months else None,
-                         "clause": excerpt(term[0])}
+        start = date_after(r"commenc\w*(?:\s+on)?|begin\w*(?:\s+on)?|start\w*(?:\s+on)?")
+        end = date_after(r"expir\w*(?:\s+on)?|end\w*(?:\s+on)?|terminat\w*(?:\s+on)?")
+        years = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?[- ]?years?", term, re.IGNORECASE)
+        months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?[- ]?months?", term, re.IGNORECASE)
+
+        def count(m):
+            return (int(m.group(1)) if m.group(1).isdigit() else WORD_NUMBERS.get(m.group(1).lower(), 0)) if m else 0
+        # "1 years 0 months 0 days" is 12 months, not 0.
+        stated = count(years) * 12 + count(months) if (years or months) else None
+        facts["term"] = {"start": start.isoformat() if start else None, "end": end.isoformat() if end else None,
+                         "months_stated": stated or None, "clause": excerpt(term)}
 
     # The unit: next to the premises address first ("..., 4N, New York"), then "Apartment 4N" wording in a
     # premises sentence, then anywhere. Never the sample's own "demonstrate Apartment 411" sentence.
@@ -442,7 +498,10 @@ def extract(text: str) -> dict:
     facts["address_candidates"] = [{k: c[k] for k in ("address", "unit", "why")} for c in candidates]
 
     name = r"([A-Z0-9][^\n(]{2,80}?)"
-    landlord = (re.search(r"between\s+" + name + r",?\s*(?:\(\s*(?:the\s+)?[\"“]?|as\s+|hereinafter\s+)(?:Landlord|Owner|Lessor)", text, re.IGNORECASE | re.DOTALL)
+    landlord = (re.search(r"Landlord[’']s\s+Name\s*:\s*" + name + r"\s*(?:$|\n)", text, re.IGNORECASE | re.MULTILINE)
+                or re.search(r"The\s+Landlord\s+is\s*:?\s*(?:\(\s*[“\"]?The\s+Landlord[”\"]?\s*\)\s*)?\n\s*" + name + r"\s*(?:$|\n)",
+                             text, re.IGNORECASE | re.MULTILINE)
+                or re.search(r"between\s+" + name + r",?\s*(?:\(\s*(?:the\s+)?[\"“]?|as\s+|hereinafter\s+)(?:Landlord|Owner|Lessor)", text, re.IGNORECASE | re.DOTALL)
                 or re.search(r"^\s*(?:Landlord|Owner|Lessor)(?:'s name|\s*name)?\s*[:\-–]\s*" + name + r"\s*(?:,|$|\n)", text, re.IGNORECASE | re.MULTILINE)
                 or re.search(r"^\s*(?:Landlord|Owner|Lessor)\s*:?\s*\n\s*" + name + r"\s*(?:,|$)", text, re.IGNORECASE | re.MULTILINE))
     facts["landlord_name"] = re.sub(r"\s+", " ", landlord.group(1)).strip(" ,") if landlord else None
@@ -545,13 +604,22 @@ def check_rules(facts: dict) -> list[dict]:
     rents = [m["amount"] for m in facts["rent_mentions"]]
 
     deposit = facts.get("security_deposit")
-    if deposit and rent:
-        text = deposit["_text"]
-        candidates = dollar_amounts(text) + ([deposit["months_stated"] * min(rents)] if deposit["months_stated"] else [])
-        allowed, _ = most_allowed(text, candidates)
-        if allowed and allowed / min(rents) > 1.0001:
+    if deposit:
+        if deposit["months_stated"]:
+            allowed, how = (None, "") if LEGAL_LIMIT.search(deposit["_text"]) and LESSER_OF.search(deposit["_text"]) \
+                else (deposit["months_stated"], "months")
+            months = allowed
+        elif deposit["amount"] and rent:
+            allowed, how = most_allowed(deposit["_text"], stated_amounts(deposit["_text"]))
+            months = allowed / min(rents) if allowed else None
+        else:
+            months = None
+            if not LEGAL_LIMIT.search(deposit["_text"]):
+                flags.append(flag(CHECK, deposit["clause"], "The deposit amount isn't stated in the lease. Ask for "
+                                  "it in writing; it can't be more than one month's rent.", "deposit_cap"))
+        if months and months > 1.0001:
             flags.append(flag(LIKELY_NOT_ALLOWED, deposit["clause"],
-                              f"The deposit is about {allowed / min(rents):.1f} months' rent; the legal maximum is one month.",
+                              f"The deposit is about {months:.1f} months' rent; the legal maximum is one month.",
                               "deposit_cap"))
     ret = facts.get("deposit_return_days")
     if ret and ret["days"] and ret["days"] > 14:

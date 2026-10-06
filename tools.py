@@ -1224,19 +1224,27 @@ def review_lease(state: dict, focus: str = "all") -> dict:
             break
     if b:
         used = building_note.split("'")[1]
-        others = dict.fromkeys(f"{c['address']} ({c['why']})" for c in facts["address_candidates"]
-                               if not any(v == used for v in lease.address_variants(c["address"])))
-        if others:
-            building_note += f" Other addresses in the lease, not used: {'; '.join(others)}."
+        others = [c for c in facts["address_candidates"] if not any(v == used for v in lease.address_variants(c["address"]))]
+        # Name other NYC addresses; only count the rest. Leases list people's mailing and previous home
+        # addresses, which aren't needed here and shouldn't be repeated back.
+        nyc_others = [f"{c['address']} ({c['why']})" for c in others if "outside NYC" not in c["why"]]
+        outside = sum("outside NYC" in c["why"] for c in others)
+        if nyc_others:
+            building_note += f" Other addresses in the lease, not used: {'; '.join(nyc_others)}."
+        if outside:
+            building_note += (f" {outside} address{'es' if outside > 1 else ''} outside NYC (such as the landlord's "
+                              f"office or a tenant's mailing address) {'were' if outside > 1 else 'was'} ignored.")
     if not b:
         try:
             b = current_building(None, state)
+            nyc_tried = [t for t in dict.fromkeys(tried) if "(outside NYC)" not in t]
             building_note = ("No address in the lease matched an NYC building"
-                             + (f" (tried: {'; '.join(dict.fromkeys(tried))})" if tried else "")
+                             + (f" (tried: {'; '.join(nyc_tried)})" if nyc_tried else "")
                              + f"; used the building being discussed, {b.label}.")
         except ToolError as e:
+            nyc_tried = [t for t in dict.fromkeys(tried) if "(outside NYC)" not in t]
             building_note = (f"City-record checks skipped: no NYC building address found in the lease"
-                             + (f" (tried: {'; '.join(dict.fromkeys(tried))})" if tried else "") + f". {e.next_step}")
+                             + (f" (tried: {'; '.join(nyc_tried)})" if nyc_tried else "") + f". {e.next_step}")
     if b:
         try:
             record_flags, context = check_against_records(facts, b, state)
@@ -1252,6 +1260,7 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     extracted = {k: ({kk: vv for kk, vv in v.items() if not kk.startswith("_")} if isinstance(v, dict) else v)
                  for k, v in facts.items() if k not in ("heat_clauses", "rent_mentions", "disclosures_present")}
     extracted["rents_stated"] = [m["amount"] for m in facts["rent_mentions"]]
+    extracted["address_candidates"] = [c for c in facts["address_candidates"] if "outside NYC" not in c["why"]]
     return {
         "address": b.label if b else None,
         "is_sample": lease.is_sample(text),

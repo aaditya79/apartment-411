@@ -139,7 +139,8 @@ def test_real_lease_shape():
     assert "error" not in r, r
     # The premises address, not the landlord's office in Great Neck; and the note says which was used.
     assert r["address"] == "155 East 92 Street", r.get("building_note")
-    assert "155 East 92nd Street" in r["building_note"] and "40 Harbor Road" in r["building_note"], r["building_note"]
+    assert "155 East 92nd Street" in r["building_note"] and "outside NYC" in r["building_note"], r["building_note"]
+    assert "Harbor Road" not in r["building_note"], "addresses outside NYC are counted, not repeated"
     assert r["extracted"]["unit"] == "4N", r["extracted"]["unit"]
     assert r["extracted"]["landlord_name"] == "Sample Gardens LLC", r["extracted"]["landlord_name"]
     # The deposit flag quotes the deposit sentence, not the apartment/term paragraph.
@@ -155,6 +156,35 @@ def test_real_lease_shape():
         if f["clause_excerpt"] and not f["clause_excerpt"].startswith(("Landlord:", "Apartment ")):
             assert f["clause_excerpt"].rstrip(".…").split(" | ")[0][:80] in flat, f["clause_excerpt"]
     return r
+
+
+def test_form_style_lease():
+    """One field per line, as in common NYC lease forms: 'The rent is: $X' right above 'The amount of the
+    security deposit is equal to one month of rent.' must not turn the rent into the deposit."""
+    text = (Path(__file__).parent / "fixtures" / "lease_form_style.txt").read_text()
+    r = json.loads(run_tool("review_lease", {}, {"lease_text": text}))
+    e = r["extracted"]
+    assert r["address"] == "155 East 92 Street" and e["unit"] == "4N", (r["address"], e["unit"])
+    assert e["landlord_name"] == "Sample Gardens LLC", e["landlord_name"]
+    assert e["security_deposit"]["months_stated"] == 1 and e["security_deposit"]["amount"] is None, e["security_deposit"]
+    assert e["security_deposit"]["clause"].startswith("The amount of the security deposit"), e["security_deposit"]["clause"]
+    assert not [f for f in r["flags"] if "deposit" in f["explanation"]], r["flags"]
+    # "$3,000" is an ACH threshold ("if the Rent is less than $3,000"), not a second rent.
+    assert e["rents_stated"] == [4100.0], e["rents_stated"]
+    assert not [f for f in r["flags"] if f["severity"] == "inconsistent"], r["flags"]
+    # "1 years 0 months 0 days" is 12 months, matching 08/01/2025 to 07/31/2026.
+    assert e["term"]["months_stated"] == 12 and e["term"]["start"] == "2025-08-01" and e["term"]["end"] == "2026-07-31", e["term"]
+    assert not [f for f in r["flags"] if "late fee" in f["explanation"]], r["flags"]
+    # The tenant's out-of-state address isn't repeated anywhere in the result.
+    assert "Example Lane" not in json.dumps(r) and "Springfield" not in json.dumps(r)
+
+
+def test_deposit_not_stated_is_a_question():
+    text = lease_with("SECURITY. Tenant shall pay a security deposit before moving in.")
+    r = json.loads(run_tool("review_lease", {}, {"lease_text": text}))
+    deposit = [f for f in r["flags"] if "deposit" in f["explanation"].lower()]
+    assert deposit and all(f["severity"] == "check with landlord" for f in deposit), deposit
+    assert "isn't stated" in deposit[0]["explanation"], deposit
 
 
 def test_no_lease():
@@ -182,6 +212,9 @@ if __name__ == "__main__":
     print("Caps written into a lease aren't flagged; amounts over the cap still are.")
     shape = test_real_lease_shape()
     print(f"Real-lease shape: {shape['building_note']}")
+    test_form_style_lease()
+    test_deposit_not_stated_is_a_question()
+    print("Form-style lease: deposit read as one month of rent, no rent/deposit mix-up, no false flags.")
     test_no_lease()
     test_scanned_pdf_message()
     print("All lease tests passed.\n")
