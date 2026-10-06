@@ -497,17 +497,40 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
 
 
 def describe_rank(mine: float, rates: list[float]) -> str:
-    """Plain-English position of this building among its neighbors, with ties handled."""
+    """Plain-English position of this building among its neighbors, ties handled, always said
+    from the side it's on: "more than X%" when worse than the median, "fewer than X%" when better.
+    ("Fewer than 34%" for a building worse than two-thirds of its block read like a compliment.)"""
     n = len(rates)
+    better = sum(r < mine for r in rates)   # nearby rentals with fewer violations per apartment
     worse = sum(r > mine for r in rates)
     tied = sum(r == mine for r in rates)
     area_median = statistics.median(rates)
+    median_text = f"area median {area_median:.2f}"
+    tie_text = f"; tied with {round(100 * tied / n)}%" if tied > 1 else ""
     if mine == 0:
-        return f"tied for cleanest: {round(100 * tied / n)}% of nearby rentals also have no open violations"
+        return f"tied for cleanest: {round(100 * tied / n)}% of nearby rentals also have no open violations ({median_text})"
     if mine == area_median:
-        return "about average for the area"
-    return (f"fewer open violations per apartment than {round(100 * worse / n)}% of nearby rentals"
-            + (f" (tied with {round(100 * tied / n)}%)" if tied > 1 else ""))
+        return f"about average for the area ({median_text})"
+    if mine > area_median:
+        return (f"more open violations per apartment than {round(100 * better / n)}% of nearby rentals "
+                f"({median_text}{tie_text})")
+    return (f"fewer open violations per apartment than {round(100 * worse / n)}% of nearby rentals "
+            f"({median_text}{tie_text})")
+
+
+def heat_comparison(count: int, units: int, area_count: int, area_units: int) -> dict:
+    """Heat complaints as a rate on both sides, with a sentence to quote: comparing this building's
+    raw count with the area's rate per 100 apartments (which the model once did) is meaningless."""
+    here = round(100 * count / units, 1) if units else None
+    area = round(100 * area_count / area_units, 1) if area_units else None
+    if here and area:
+        ratio = f" ({here / area:.1f}x the area rate)" if here >= area else f" (the area's rate is {area / here:.1f}x this)"
+    else:
+        ratio = ""
+    plural = "complaint" if count == 1 else "complaints"
+    return {"this_building": here, "area": area, "this_building_count": count,
+            "compare_as": (f"{here} heat/hot-water complaints per 100 apartments here vs {area} for nearby rentals"
+                           f"{ratio}, since 2023 ({count} {plural} across {units} apartments here)")}
 
 
 def get_neighborhood_context(state: dict, address: str | None = None, radius_miles: float = 0.25) -> dict:
@@ -568,10 +591,7 @@ def get_neighborhood_context(state: dict, address: str | None = None, radius_mil
             "area_median": round(statistics.median(others), 2),
             "this_building_vs_area": describe_rank(rate[b.bbl], others),
         },
-        "heat_complaints_per_100_apartments_since_2023": {
-            "this_building": round(100 * heat.get(b.bbl, 0) / b.units, 1),
-            "area": round(100 * area_heat / total_units, 1) if total_units else None,
-        },
+        "heat_complaints_per_100_apartments_since_2023": heat_comparison(heat.get(b.bbl, 0), b.units, area_heat, total_units),
         "rats": {
             "share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023": f"{round(100 * len(rat_lots) / len(rentals))}%",
             "this_building_failed_one": b.bbl in rat_lots,

@@ -97,6 +97,19 @@ def point_in_ring(x: float, y: float, ring: list) -> bool:
     return inside
 
 
+def point_along(points: list, fraction: float) -> tuple[float, float]:
+    """The point a given fraction of the way along a wall's polyline. A wall with a jog
+    isn't straight, and its end-to-end chord can run through the building itself."""
+    lengths = [math.dist(a, b) for a, b in zip(points, points[1:])]
+    target = sum(lengths) * fraction
+    for (a, b), length in zip(zip(points, points[1:]), lengths):
+        if target <= length or length == lengths[-1]:
+            t = min(1.0, target / length) if length else 0.0
+            return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        target -= length
+    return points[-1]
+
+
 def ray_distance(ox: float, oy: float, dx: float, dy: float, edges: np.ndarray) -> np.ndarray:
     """Distance along the ray o + t*d to each edge [x1, y1, x2, y2] it crosses (inf if none)."""
     ex, ey = edges[:, 2] - edges[:, 0], edges[:, 3] - edges[:, 1]
@@ -243,18 +256,23 @@ class Site:
         for s in sides:
             a, c = s["points"][0], s["points"][-1]
             s["start"], s["end"] = a, c
-            dx, dy = math.sin(math.radians(s["bearing"])), math.cos(math.radians(s["bearing"]))
-            # How much open space is in front of this side (median of 3 probes along it)?
+            nx, ny = math.sin(math.radians(s["bearing"])), math.cos(math.radians(s["bearing"]))
+            # How much open space is in front of this side: probes at 3 points on the wall, each
+            # looking straight out and 30/60 degrees to either side. A single straight probe called
+            # a notch in an L-shaped building "40 m of open space" while its own wing was 7 m away.
             gaps = []
             for f in WINDOW_POSITIONS:
-                px, py = a[0] + (c[0] - a[0]) * f + dx * 0.3, a[1] + (c[1] - a[1]) * f + dy * 0.3
-                gaps.append(min(ray_distance(px, py, dx, dy, others).min(), ray_distance(px, py, dx, dy, own).min()))
+                wx, wy = point_along(s["points"], f)
+                px, py = wx + nx * 0.3, wy + ny * 0.3
+                for turn in (-60, -30, 0, 30, 60):
+                    dx, dy = math.sin(math.radians(s["bearing"] + turn)), math.cos(math.radians(s["bearing"] + turn))
+                    gaps.append(min(ray_distance(px, py, dx, dy, others).min(), ray_distance(px, py, dx, dy, own).min()))
             s["open_m"] = float(np.median(gaps))
             s["direction"] = compass(s["bearing"])
             mid = ((a[0] + c[0]) / 2, (a[1] + c[1]) / 2)
             s["distance_to_address_point"] = math.dist(mid, (0, 0))
 
-        usable = [s for s in sides if s["length"] >= 3]
+        usable = [s for s in sides if s["length"] >= 4]  # shorter pieces are jogs in the outline, not window walls
         streets = [s for s in usable if s["open_m"] >= STREET_MIN_OPEN_M]
         if self._street_bearing is not None:
             # A street-side wall runs parallel to the street, so it faces at right angles to it.
@@ -289,10 +307,9 @@ class Site:
     def sun_minutes(self, side: dict, floor: int, floor_height_ft: float, position: float, height_factor: float,
                     track: list) -> tuple[list[bool], list[int]]:
         """For each time in the track: is the window in direct sun, and which building blocks it (-1 = none)."""
-        a, c = side["start"], side["end"]
         dx_n, dy_n = math.sin(math.radians(side["bearing"])), math.cos(math.radians(side["bearing"]))
-        ox = a[0] + (c[0] - a[0]) * position + dx_n * 0.6
-        oy = a[1] + (c[1] - a[1]) * position + dy_n * 0.6
+        wx, wy = point_along(side["points"], position)
+        ox, oy = wx + dx_n * 0.6, wy + dy_n * 0.6
         window_z = self.target["ground_m"] + ((floor - 1) * floor_height_ft + floor_height_ft / 2) * FT
 
         tops = self.edges["ground"] + self.edges["height"] * height_factor
@@ -334,11 +351,6 @@ def clock(t: datetime) -> str:
     return t.strftime("%-I:%M%p").lower().replace(":00", "")
 
 
-def clock_range(times: list[datetime]) -> str:
-    lo, hi = min(times), max(times)
-    return clock(lo) if (hi - lo).seconds < 600 else f"{clock(lo)}-{clock(hi)}"
-
-
 def season_dates(today: date) -> dict[str, date]:
     """Today plus the next solstices/equinox (the sun's path repeats every year)."""
     def next_one(month: int, day: int) -> date:
@@ -349,25 +361,24 @@ def season_dates(today: date) -> dict[str, date]:
 
 
 def ensemble(site: Site, side: dict, floor: int, day: date, runs=None) -> dict:
-    """Direct-sun hours for one window and day, as a median with an uncertainty range."""
+    """Direct-sun hours for one window and day, as a median with an uncertainty range, plus the
+    actual sunny periods of the median run (sun can come in patches between buildings)."""
     track = sun_track(day, site.lat, site.lon)
     runs = runs or list(product(FLOOR_HEIGHTS_FT, WINDOW_POSITIONS, HEIGHT_FACTORS))
-    hours, starts, ends, blocked_by = [], [], [], {}
+    hours, periods_by_run, blocked_by = [], [], {}
     for fh, pos, hf in runs:
         lit, blockers = site.sun_minutes(side, floor, fh, pos, hf, track)
         hours.append(sum(lit) * STEP_MIN / 60)
-        periods = spans(track, lit)
-        if periods:
-            starts.append(periods[0][0])
-            ends.append(periods[-1][1])
+        periods_by_run.append(spans(track, lit))
         for blk in blockers:
             if blk >= 0:
                 blocked_by[blk] = blocked_by.get(blk, 0) + STEP_MIN / len(runs)
     median = float(np.median(hours))
     result = {"hours": round(median, 1), "range": [round(min(hours), 1), round(max(hours), 1)]}
-    if starts and median > 0:
-        result["sun_from"] = clock_range(starts)
-        result["sun_until"] = clock_range(ends)
+    if median > 0:
+        # The run whose total is closest to the median stands in for "typical".
+        typical = periods_by_run[min(range(len(runs)), key=lambda i: abs(hours[i] - median))]
+        result["periods"] = [f"{clock(a)}-{clock(b)}" for a, b in typical]
     if blocked_by:
         main, minutes = max(blocked_by.items(), key=lambda kv: kv[1])
         result["main_blocker"] = {"index": main, "hours_blocked": round(minutes / 60, 1)}
@@ -381,6 +392,9 @@ def describe(day_result: dict) -> str:
     if h == 0:
         return f"little or no direct sun (at most {hi:g} h)"
     text = f"about {h:g} h ({lo:g}-{hi:g} h)"
-    if "sun_from" in day_result:
-        text += f", roughly {day_result['sun_from']} to {day_result['sun_until']}"
+    periods = day_result.get("periods") or []
+    if len(periods) == 1:
+        text += f", roughly {periods[0]}"
+    elif periods:
+        text += f", in {len(periods)} stretches: roughly {', '.join(periods)}"
     return text

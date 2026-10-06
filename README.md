@@ -107,7 +107,7 @@ Each tool says how old the data it used is.
 
 My building, 4th floor, checked against [ShadeMap](https://shademap.app) and my own experience:
 
-- **Street side (facing northwest, ~299°):** the model gives about 1.2 h of direct sun on Oct 5 (range 0.9–1.8 h), roughly 2:20pm to 3:15–4:05pm. ShadeMap shows the street in sun at 2pm and the facade in shadow by 4pm. That matches ShadeMap within about 10–20 minutes.
+- **Street side (facing northwest, ~299°):** the model gives about 1.2 h of direct sun on Oct 5 (range 0.9–1.8 h), roughly 2:20–3:20pm in the typical run. ShadeMap shows the street in sun at 2pm and the facade in shadow by 4pm. That matches ShadeMap within about 10–20 minutes.
 - **Shaft-facing window** (side walls facing the ~3.7 m gaps to the neighbors): the model gives little or no direct sun, which matches my experience ("it's right next to the neighbouring building").
 - **Rear end wall** (8 m, facing southeast; about 4.2 h today in the model, because the buildings behind sit on lower ground): unvalidated.
 
