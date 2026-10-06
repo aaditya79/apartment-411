@@ -83,6 +83,54 @@ def test_label_survives_pdf():
     return len(pages)
 
 
+def lease_with(clause: str, rent: str = "$3,000.00") -> str:
+    """A minimal lease (no address, so only the rule checks run) around one clause under test."""
+    return (f"RESIDENTIAL LEASE between Example Realty LLC (\"Landlord\") and Sam Tenant (\"Tenant\").\n\n"
+            f"1. RENT. Tenant shall pay monthly rent of {rent}, due on the first day of each month.\n\n"
+            f"2. {clause}\n\nTHERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN THE LEASED PREMISES.\n")
+
+
+def money_flags(clause: str, rule_words: str) -> list[dict]:
+    r = json.loads(run_tool("review_lease", {"focus": "money"}, {"lease_text": lease_with(clause)}))
+    assert "error" not in r, r
+    return [f for f in r["flags"] if f["severity"] == "likely not allowed under NY law" and rule_words in f["explanation"]]
+
+
+def test_caps_written_into_the_lease_are_not_flagged():
+    compliant = [
+        # The real-lease false positive: the lease itself applies the legal cap.
+        ("late fee", "LATE CHARGE. If rent is not paid more than five (5) days after it is due, Tenant shall pay a "
+                     "reasonable late charge of the lesser of fifty (50) dollars or five percent (5%) of the monthly rent."),
+        ("late fee", "LATE CHARGE. If rent is more than five (5) days late, a late fee of five percent of the monthly "
+                     "rent, not to exceed $50.00, is due."),
+        ("late fee", "LATE CHARGE. If rent is more than five (5) days late, Tenant shall pay $50.00 or 5% of the monthly "
+                     "rent, whichever is less."),
+        ("deposit", "SECURITY DEPOSIT. Tenant shall deposit one month's rent or the maximum permitted by law, whichever "
+                    "is less, as security."),
+        ("deposit", "SECURITY DEPOSIT. Tenant shall deposit two (2) months' rent or the maximum permitted by law, "
+                    "whichever is less, as security."),
+        ("application", "APPLICATION FEE. Tenant paid the actual cost of the background check or $20.00, whichever is less."),
+        ("application", "APPLICATION FEE. Tenant paid a credit check fee of $50.00 or the actual cost, whichever is less, "
+                        "but not to exceed $20.00."),
+    ]
+    for words, clause in compliant:
+        found = money_flags(clause, words)
+        assert not found, f"compliant clause was flagged: {clause!r} -> {found}"
+
+
+def test_amounts_over_the_cap_are_still_flagged():
+    over = [
+        ("late fee", "LATE CHARGES. If any rent is not received more than two (2) days after it is due, Tenant shall "
+                     "pay a late fee of $75.00."),
+        ("late fee", "LATE CHARGE. If rent is more than five (5) days late, Tenant shall pay a late fee of 5% of the "
+                     "monthly rent."),
+        ("deposit", "SECURITY DEPOSIT. Upon signing, Tenant shall deposit $6,000.00, equal to two (2) months' rent."),
+        ("application", "APPLICATION FEE. Tenant has paid a non-refundable application and credit check fee of $150.00."),
+    ]
+    for words, clause in over:
+        assert money_flags(clause, words), f"over-the-cap clause was not flagged: {clause!r}"
+
+
 def test_no_lease():
     r = json.loads(run_tool("review_lease", {}, {}))
     assert r["error"].startswith("No lease"), r
@@ -103,6 +151,9 @@ if __name__ == "__main__":
     test_fictional_label_on_every_section()
     pages = test_label_survives_pdf()
     print(f"Fictional label on every section, and on all {pages} PDF pages after extraction.")
+    test_caps_written_into_the_lease_are_not_flagged()
+    test_amounts_over_the_cap_are_still_flagged()
+    print("Caps written into a lease aren't flagged; amounts over the cap still are.")
     test_no_lease()
     test_scanned_pdf_message()
     print("All lease tests passed.\n")

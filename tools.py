@@ -1225,7 +1225,8 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     order = {lease.LIKELY_NOT_ALLOWED: 0, lease.INCONSISTENT: 1, lease.CHECK: 2}
     flags.sort(key=lambda f: order[f["severity"]])
 
-    extracted = {k: v for k, v in facts.items() if k not in ("heat_clauses", "rent_mentions", "disclosures_present")}
+    extracted = {k: ({kk: vv for kk, vv in v.items() if not kk.startswith("_")} if isinstance(v, dict) else v)
+                 for k, v in facts.items() if k not in ("heat_clauses", "rent_mentions", "disclosures_present")}
     extracted["rents_stated"] = [m["amount"] for m in facts["rent_mentions"]]
     return {
         "address": b.label if b else None,

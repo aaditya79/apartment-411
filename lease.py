@@ -235,6 +235,54 @@ def money(text: str) -> list[float]:
     return [float(m.replace(",", "")) for m in MONEY.findall(text)]
 
 
+DOLLAR_WORDS = {"ten": 10, "fifteen": 15, "twenty": 20, "twenty-five": 25, "thirty": 30, "forty": 40, "fifty": 50,
+                "seventy-five": 75, "one hundred": 100}
+PERCENT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                 "ten": 10}
+# The lease itself applies the lower of two amounts, or a ceiling.
+LESSER_OF = re.compile(r"lesser of|whichever is (less|lower|smaller)|(not|shall not|will not|never) (to )?exceed|"
+                       r"no more than|not more than|up to a maximum|maximum of|capped at|"
+                       r"in no event (more|greater) than", re.IGNORECASE)
+# ...or defers to the law's own limit.
+LEGAL_LIMIT = re.compile(r"(permitted|allowed|authori[sz]ed) (by|under) (law|statute)|legal (maximum|limit)|"
+                         r"maximum (amount )?(permitted|allowed)|applicable law|\b238-a\b|\b7-108\b", re.IGNORECASE)
+
+
+def dollar_amounts(text: str) -> list[float]:
+    """'$50', '50 dollars', 'fifty (50) dollars', 'fifty dollars'."""
+    found = money(text)
+    found += [float(m.replace(",", "")) for m in re.findall(r"\(?(\d[\d,]*(?:\.\d{2})?)\)?\s*dollars", text, re.IGNORECASE)]
+    for word, value in DOLLAR_WORDS.items():
+        if re.search(rf"\b{word}\s+(\(\d+\)\s*)?dollars", text, re.IGNORECASE):
+            found.append(float(value))
+    return sorted(set(found))
+
+
+def percent_values(text: str) -> list[float]:
+    """'5%', '5 percent', 'five percent', 'five (5%)'."""
+    found = [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)", text, re.IGNORECASE)]
+    for word, value in PERCENT_WORDS.items():
+        if re.search(rf"\b{word}\s+(\(\d+%?\)\s*)?(?:percent|per cent)", text, re.IGNORECASE):
+            found.append(float(value))
+    return sorted(set(found))
+
+
+def most_allowed(text: str, candidates: list[float]) -> tuple[float | None, str]:
+    """The most a clause lets the landlord charge, given the amounts it names.
+
+    "the lesser of $50 or 5%" and "5%, not to exceed $50" allow the lower amount; a clause that defers
+    to the legal maximum ("one month's rent or the maximum permitted by law, whichever is less")
+    can't exceed it by definition. Otherwise the highest amount named is what's allowed.
+    """
+    if LESSER_OF.search(text) and LEGAL_LIMIT.search(text):
+        return None, "the lease caps it at the legal limit"
+    if not candidates:
+        return None, "no amount stated"
+    if LESSER_OF.search(text):
+        return min(candidates), "the lease applies the lower amount"
+    return max(candidates), "as stated"
+
+
 def number_of_days(text: str) -> int | None:
     """'more than two (2) days' -> 2; '5 days' -> 5."""
     m = re.search(r"\((\d+)\)\s*(?:business\s+)?days?|(\d+)\s*(?:business\s+)?days?|\b(" + "|".join(WORD_NUMBERS) +
@@ -287,7 +335,7 @@ def extract(text: str) -> dict:
     if deposit:
         amounts = money(deposit[0])
         months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?months?'? rent", deposit[0], re.IGNORECASE)
-        facts["security_deposit"] = {"amount": amounts[0] if amounts else None,
+        facts["security_deposit"] = {"amount": amounts[0] if amounts else None, "_text": deposit[0],
                                      "months_stated": (int(months.group(1)) if months.group(1).isdigit()
                                                        else WORD_NUMBERS.get(months.group(1).lower())) if months else None,
                                      "clause": excerpt(deposit[0])}
@@ -316,16 +364,15 @@ def extract(text: str) -> dict:
                 or re.search(r"^\s*Landlord\s*:\s*(.{3,80}?)(?:,|$)", text, re.IGNORECASE | re.MULTILINE))
     facts["landlord_name"] = re.sub(r"\s+", " ", landlord.group(1)).strip(" ,") if landlord else None
 
-    late = [p for p in find(pieces, r"\blate\b") if MONEY.search(p) or re.search(r"%|percent", p)]
+    late = [p for p in find(pieces, r"\blate\b") if dollar_amounts(p) or percent_values(p)]
     if late:
-        pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent)", late[0])
-        facts["late_fee"] = {"amount": money(late[0])[0] if money(late[0]) else None,
-                             "percent": float(pct.group(1)) if pct else None,
-                             "after_days": number_of_days(late[0]), "clause": excerpt(late[0])}
+        facts["late_fee"] = {"amounts": dollar_amounts(late[0]), "percents": percent_values(late[0]),
+                             "after_days": number_of_days(late[0]), "clause": excerpt(late[0]), "_text": late[0]}
 
-    app_fee = [p for p in find(pieces, r"application|credit check|background check|processing") if MONEY.search(p)]
+    app_fee = [p for p in find(pieces, r"application|credit check|background check|processing") if dollar_amounts(p)]
     if app_fee:
-        facts["application_fee"] = {"amount": max(money(app_fee[0])), "clause": excerpt(app_fee[0])}
+        facts["application_fee"] = {"amounts": dollar_amounts(app_fee[0]), "clause": excerpt(app_fee[0]),
+                                    "_text": app_fee[0]}
 
     broker = [p for p in find(pieces, r"broker") if re.search(r"fee|commission", p, re.IGNORECASE)]
     if broker:
@@ -415,10 +462,12 @@ def check_rules(facts: dict) -> list[dict]:
 
     deposit = facts.get("security_deposit")
     if deposit and rent:
-        months = deposit["amount"] / min(rents) if deposit["amount"] else deposit["months_stated"]
-        if months and months > 1.0001:
+        text = deposit["_text"]
+        candidates = dollar_amounts(text) + ([deposit["months_stated"] * min(rents)] if deposit["months_stated"] else [])
+        allowed, _ = most_allowed(text, candidates)
+        if allowed and allowed / min(rents) > 1.0001:
             flags.append(flag(LIKELY_NOT_ALLOWED, deposit["clause"],
-                              f"The deposit is about {months:.1f} months' rent; the legal maximum is one month.",
+                              f"The deposit is about {allowed / min(rents):.1f} months' rent; the legal maximum is one month.",
                               "deposit_cap"))
     ret = facts.get("deposit_return_days")
     if ret and ret["days"] and ret["days"] > 14:
@@ -426,10 +475,12 @@ def check_rules(facts: dict) -> list[dict]:
                           f"The lease allows {ret['days']} days to return the deposit; the law requires 14.", "deposit_return"))
 
     fee = facts.get("application_fee")
-    if fee and fee["amount"] > 20:
-        flags.append(flag(LIKELY_NOT_ALLOWED, fee["clause"],
-                          f"The application/credit-check fee is ${fee['amount']:,.2f}; the cap is $20 (or the actual "
-                          "cost of the check, if lower).", "application_fee"))
+    if fee:
+        allowed, _ = most_allowed(fee["_text"], fee["amounts"])
+        if allowed and allowed > 20:
+            flags.append(flag(LIKELY_NOT_ALLOWED, fee["clause"],
+                              f"The application/credit-check fee is ${allowed:,.2f}; the cap is $20 (or the actual "
+                              "cost of the check, if lower).", "application_fee"))
 
     late = facts.get("late_fee")
     if late:
@@ -438,9 +489,11 @@ def check_rules(facts: dict) -> list[dict]:
             problems.append(f"it applies after {late['after_days']} days late (the law requires more than 5)")
         if rent:
             cap = min(50.0, 0.05 * min(rents))
-            amount = late["amount"] or (late["percent"] or 0) / 100 * rent
-            if amount > cap + 0.01:
-                problems.append(f"${amount:,.2f} is over the ${cap:,.2f} cap for this rent")
+            candidates = late["amounts"] + [p / 100 * rent for p in late["percents"]]
+            allowed, how = most_allowed(late["_text"], candidates)
+            # Only flag what the lease actually permits: "the lesser of $50 or 5%" is the legal cap itself.
+            if allowed is not None and allowed > cap + 0.01:
+                problems.append(f"it allows ${allowed:,.2f}, over the ${cap:,.2f} cap for this rent")
         if problems:
             flags.append(flag(LIKELY_NOT_ALLOWED, late["clause"], "The late fee looks too high or too early: "
                               + "; ".join(problems) + ".", "late_fee"))
