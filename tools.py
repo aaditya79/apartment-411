@@ -1206,13 +1206,37 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     facts = lease.extract(text)
     flags = lease.check_consistency(facts) + lease.check_rules(facts)
 
-    # The building: the address in the lease if there is one, else the one being discussed.
-    m = ADDRESS_IN_TEXT.search(text)
-    b, context, building_note = None, {}, None
-    try:
-        b = current_building(m.group(1).strip(" ,.") if m else None, state)
-    except ToolError as e:
-        building_note = f"City-record checks skipped: {e.error}"
+    # The building: the lease's premises address (best-scoring candidate that the city geocoder
+    # accepts), else the building being discussed. A landlord's office address scores low.
+    b, context, building_note, tried = None, {}, None, []
+    for candidate in facts["address_candidates"]:
+        if candidate["why"].endswith("zip outside NYC"):
+            tried.append(f"{candidate['address']} (outside NYC)")
+            continue
+        for variant in lease.address_variants(candidate["address"]):
+            try:
+                b = current_building(variant, state)
+                building_note = f"Used the premises address '{variant}' ({candidate['why']})."
+                break
+            except ToolError:
+                tried.append(variant)
+        if b:
+            break
+    if b:
+        used = building_note.split("'")[1]
+        others = dict.fromkeys(f"{c['address']} ({c['why']})" for c in facts["address_candidates"]
+                               if not any(v == used for v in lease.address_variants(c["address"])))
+        if others:
+            building_note += f" Other addresses in the lease, not used: {'; '.join(others)}."
+    if not b:
+        try:
+            b = current_building(None, state)
+            building_note = ("No address in the lease matched an NYC building"
+                             + (f" (tried: {'; '.join(dict.fromkeys(tried))})" if tried else "")
+                             + f"; used the building being discussed, {b.label}.")
+        except ToolError as e:
+            building_note = (f"City-record checks skipped: no NYC building address found in the lease"
+                             + (f" (tried: {'; '.join(dict.fromkeys(tried))})" if tried else "") + f". {e.next_step}")
     if b:
         try:
             record_flags, context = check_against_records(facts, b, state)
@@ -1236,7 +1260,7 @@ def review_lease(state: dict, focus: str = "all") -> dict:
         "missing_disclosures": lease.missing_disclosures(facts, b.units if b else None, b.year_built if b else None),
         "extracted": extracted,
         "city_record_context": context,
-        **({"building_note": building_note} if building_note else {}),
+        "building_note": building_note,
         "note": LEASE_NOTE,
     }
 

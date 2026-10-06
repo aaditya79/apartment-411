@@ -316,6 +316,79 @@ def find(pieces: list[str], *patterns: str) -> list[str]:
     return [p for p in pieces if all(re.search(pat, p, re.IGNORECASE) for pat in patterns)]
 
 
+def clause_around(pieces: list[str], keyword: str, need=None, prefer: str | None = None) -> str | None:
+    """The text a rule should read and quote: from just before `keyword` to the end of its sentence,
+    in the best piece that mentions it. Quoting the start of a paragraph showed an apartment/term
+    paragraph as the "deposit clause" when that paragraph merely mentioned a deposit."""
+    best = None
+    for i, piece in enumerate(pieces):
+        m = re.search(keyword, piece, re.IGNORECASE)
+        if not m:
+            continue
+        start = max(0, m.start() - 60)
+        start = piece.rfind(" ", 0, start) + 1 if start else 0
+        stop = piece.find(". ", m.end() + 40)
+        window = piece[start:(stop + 1 if stop >= 0 else min(len(piece), m.end() + 280))]
+        if need and not need(window):
+            continue
+        score = (3 if prefer and re.search(prefer, piece[:40], re.IGNORECASE) else 0)  # the clause's heading
+        score += 2 if re.search(r"\$|dollars|percent|%|months?'? rent", piece[m.end():m.end() + 140], re.IGNORECASE) else 0
+        if best is None or score > best[0]:
+            best = (score, i, window)
+    return best[2] if best else None
+
+
+STREET_TYPES = r"avenue|ave|street|st|boulevard|blvd|place|pl|road|rd|drive|dr|parkway|pkwy|terrace|ter|lane|ln|court|ct"
+LEASE_ADDRESS = re.compile(
+    r"\b(\d{1,5}(?:\s*[-–&/]\s*\d{1,5}|\s+\d{1,5}(?=\s+[a-z]))?\s+"      # house number, or a range "184-188" / "184 188"
+    r"(?:(?:east|west|north|south|e\.?|w\.?)\s+)?[a-z0-9.' ]{1,40}?\s(?:" + STREET_TYPES + r")\b\.?)",
+    re.IGNORECASE)
+NYC_ZIP_PREFIXES = ("100", "101", "102", "103", "104", "111", "112", "113", "114", "116")
+NYC_PLACE = re.compile(r"\b(manhattan|brooklyn|queens|bronx|staten island|new york)\b", re.IGNORECASE)
+PREMISES_WORDS = re.compile(r"premises|apartment|\bapt\b|\bunit\b|leases? to|rents? to|demised|located at|dwelling",
+                            re.IGNORECASE)
+LANDLORD_WORDS = re.compile(r"landlord|owner|lessor|managing agent|notices?|c/o|attention|attn|business|mail|payable to|"
+                            r"send (rent|payments?)", re.IGNORECASE)
+
+
+def address_variants(address: str) -> list[str]:
+    """'184 188 Claremont Avenue' or '184-188 ...' is a range on one building: try each end.
+    ('45-17 21st St' is a Queens house number, not a range: its second part is smaller.)"""
+    m = re.match(r"^(\d{1,5})\s*(?:[-–&/]|\s)\s*(\d{1,5})\s+(.*)$", address)
+    if m and len(m.group(1)) == len(m.group(2)) and 0 < int(m.group(2)) - int(m.group(1)) <= 40:
+        return [f"{m.group(1)} {m.group(3)}", f"{m.group(2)} {m.group(3)}"]
+    return [address]
+
+
+def address_candidates(text: str) -> list[dict]:
+    """Every street address in the lease, best first: the premises address beats a landlord's
+    business or notice address, and an NYC address beats one outside the city."""
+    out = []
+    for m in LEASE_ADDRESS.finditer(text):
+        street = re.sub(r"\s+", " ", m.group(1)).strip(" ,.")
+        after = text[m.end():m.end() + 70]
+        unit = re.match(r"\s*,?\s*(?:(?:apt\.?|apartment|unit|#)\s*(?:no\.?|#)?\s*([0-9]{1,4}[A-Z]{0,2})|([0-9]{1,3}[A-Z]{1,2}))\b",
+                        after, re.IGNORECASE)
+        zip_match = re.search(r"\b(\d{5})\b", after)
+        place = NYC_PLACE.search(after[:45])
+        para_start = text.rfind("\n\n", 0, m.start())
+        paragraph = text[para_start + 1 if para_start >= 0 else 0:m.start()]
+        before = text[max(0, m.start() - 160):m.start()]
+        score, why = 0, []
+        if PREMISES_WORDS.search(paragraph[-240:]) or PREMISES_WORDS.search(after[:30]):
+            score += 3; why.append("premises wording")
+        if LANDLORD_WORDS.search(before[-100:]) and not PREMISES_WORDS.search(before[-60:]):
+            score -= 3; why.append("next to landlord/notice wording")
+        if zip_match:
+            nyc = zip_match.group(1).startswith(NYC_ZIP_PREFIXES) or zip_match.group(1) in ("11004", "11005")
+            score += 1 if nyc else -5
+            why.append("NYC zip" if nyc else "zip outside NYC")
+        address = street + (f", {place.group(1)}" if place else "") + (f" {zip_match.group(1)}" if zip_match else "")
+        out.append({"address": address, "unit": ((unit.group(1) or unit.group(2)).upper() if unit else None),
+                    "score": score, "why": ", ".join(why) or "no context", "position": m.start()})
+    return sorted(out, key=lambda c: (-c["score"], c["position"]))
+
+
 # --- Extraction ---
 
 
@@ -330,18 +403,19 @@ def extract(text: str) -> dict:
     facts["rent_mentions"] = [{"amount": money(p)[0], "clause": excerpt(p)} for p in rent_clauses]
     facts["monthly_rent"] = facts["rent_mentions"][0]["amount"] if rent_clauses else None
 
-    deposit = find(pieces, r"security|deposit")
-    deposit = [p for p in deposit if MONEY.search(p) or re.search(r"months?'? rent", p, re.IGNORECASE)]
+    deposit = clause_around(pieces, r"security deposit|\bdeposit\b|\bsecurity\b",
+                            need=lambda t: dollar_amounts(t) or re.search(r"months?'? rent", t, re.IGNORECASE),
+                            prefer=r"security|deposit")
     if deposit:
-        amounts = money(deposit[0])
-        months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?months?'? rent", deposit[0], re.IGNORECASE)
-        facts["security_deposit"] = {"amount": amounts[0] if amounts else None, "_text": deposit[0],
+        amounts = dollar_amounts(deposit)
+        months = re.search(r"(\d+|" + "|".join(WORD_NUMBERS) + r")\s*(?:\(\d+\)\s*)?months?'? rent", deposit, re.IGNORECASE)
+        facts["security_deposit"] = {"amount": max(amounts) if amounts else None, "_text": deposit,
                                      "months_stated": (int(months.group(1)) if months.group(1).isdigit()
                                                        else WORD_NUMBERS.get(months.group(1).lower())) if months else None,
-                                     "clause": excerpt(deposit[0])}
-    deposit_return = find(pieces, r"deposit", r"return")
+                                     "clause": excerpt(deposit)}
+    deposit_return = clause_around(pieces, r"\breturn", need=lambda t: re.search(r"deposit|security", t, re.IGNORECASE))
     if deposit_return:
-        facts["deposit_return_days"] = {"days": number_of_days(deposit_return[0]), "clause": excerpt(deposit_return[0])}
+        facts["deposit_return_days"] = {"days": number_of_days(deposit_return), "clause": excerpt(deposit_return)}
 
     term = find(pieces, r"\bterm\b|commenc|beginning|begins")
     if term:
@@ -353,41 +427,51 @@ def extract(text: str) -> dict:
                                            else WORD_NUMBERS.get(months.group(1).lower())) if months else None,
                          "clause": excerpt(term[0])}
 
-    # The unit comes from the premises clause, so "Apartment" elsewhere (a title, a rider) can't fool it.
-    unit_pattern = re.compile(r"\b(?:apartment|apt\.?|unit)\s*(?:no\.?|#)?\s*([0-9]{1,4}[A-Z]{0,2}|[A-Z]{1,2}-?\d{0,3})\b",
+    # The unit: next to the premises address first ("..., 4N, New York"), then "Apartment 4N" wording in a
+    # premises sentence, then anywhere. Never the sample's own "demonstrate Apartment 411" sentence.
+    candidates = address_candidates(text)
+    unit = next((c["unit"] for c in candidates if c["unit"] and c["score"] > 0), None)
+    unit_pattern = re.compile(r"\b(?:apartment|apt\.?|unit)\s*(?:no\.?|number|#)?\s*[:#]?\s*([0-9]{1,4}[A-Z]{0,2}|[A-Z]{1,2}-?\d{1,3})\b",
                               re.IGNORECASE)
-    premises = find(pieces, r"premises|leases? to|located at|\bat \d+")
-    unit = next((m for p in premises for m in [unit_pattern.search(p)] if m), None)
-    facts["unit"] = unit.group(1).upper() if unit else None
+    if not unit:
+        usable = [p for p in pieces if "demonstrate" not in p.lower()]
+        premises = [p for p in usable if PREMISES_WORDS.search(p)]
+        hit = next((m for p in premises + usable for m in [unit_pattern.search(p)] if m), None)
+        unit = hit.group(1).upper() if hit else None
+    facts["unit"] = unit
+    facts["address_candidates"] = [{k: c[k] for k in ("address", "unit", "why")} for c in candidates]
 
-    landlord = (re.search(r"between\s+(.{3,80}?)\s*\(\s*[\"“]?Landlord", text, re.IGNORECASE | re.DOTALL)
-                or re.search(r"^\s*Landlord\s*:\s*(.{3,80}?)(?:,|$)", text, re.IGNORECASE | re.MULTILINE))
+    name = r"([A-Z0-9][^\n(]{2,80}?)"
+    landlord = (re.search(r"between\s+" + name + r",?\s*(?:\(\s*(?:the\s+)?[\"“]?|as\s+|hereinafter\s+)(?:Landlord|Owner|Lessor)", text, re.IGNORECASE | re.DOTALL)
+                or re.search(r"^\s*(?:Landlord|Owner|Lessor)(?:'s name|\s*name)?\s*[:\-–]\s*" + name + r"\s*(?:,|$|\n)", text, re.IGNORECASE | re.MULTILINE)
+                or re.search(r"^\s*(?:Landlord|Owner|Lessor)\s*:?\s*\n\s*" + name + r"\s*(?:,|$)", text, re.IGNORECASE | re.MULTILINE))
     facts["landlord_name"] = re.sub(r"\s+", " ", landlord.group(1)).strip(" ,") if landlord else None
 
-    late = [p for p in find(pieces, r"\blate\b") if dollar_amounts(p) or percent_values(p)]
+    late = clause_around(pieces, r"\blate (?:fee|charge)s?|\blate\b",
+                         need=lambda t: dollar_amounts(t) or percent_values(t), prefer=r"late")
     if late:
-        facts["late_fee"] = {"amounts": dollar_amounts(late[0]), "percents": percent_values(late[0]),
-                             "after_days": number_of_days(late[0]), "clause": excerpt(late[0]), "_text": late[0]}
+        facts["late_fee"] = {"amounts": dollar_amounts(late), "percents": percent_values(late),
+                             "after_days": number_of_days(late), "clause": excerpt(late), "_text": late}
 
-    app_fee = [p for p in find(pieces, r"application|credit check|background check|processing") if dollar_amounts(p)]
+    app_fee = clause_around(pieces, r"application|credit check|background check|processing fee",
+                            need=dollar_amounts, prefer=r"application|fee")
     if app_fee:
-        facts["application_fee"] = {"amounts": dollar_amounts(app_fee[0]), "clause": excerpt(app_fee[0]),
-                                    "_text": app_fee[0]}
+        facts["application_fee"] = {"amounts": dollar_amounts(app_fee), "clause": excerpt(app_fee), "_text": app_fee}
 
-    broker = [p for p in find(pieces, r"broker") if re.search(r"fee|commission", p, re.IGNORECASE)]
+    broker = clause_around(pieces, r"broker", need=lambda t: re.search(r"fee|commission", t, re.IGNORECASE),
+                           prefer=r"broker")
     if broker:
-        facts["broker_fee"] = {"amount": money(broker[0])[0] if money(broker[0]) else None,
+        facts["broker_fee"] = {"amount": (dollar_amounts(broker) or [None])[0],
                                "tenant_pays": bool(re.search(r"tenant (shall|will|must|agrees to) pay|paid by tenant",
-                                                             broker[0], re.IGNORECASE)),
-                               "clause": excerpt(broker[0])}
+                                                             broker, re.IGNORECASE)),
+                               "clause": excerpt(broker)}
 
-    attorney = find(pieces, r"attorney")
+    attorney = clause_around(pieces, r"attorney", prefer=r"attorney")
     if attorney:
-        clause = attorney[0]
-        reciprocal = bool(re.search(r"prevailing party|either party|each party|landlord shall pay tenant", clause, re.IGNORECASE))
+        reciprocal = bool(re.search(r"prevailing party|either party|each party|landlord shall pay tenant", attorney, re.IGNORECASE))
         facts["attorney_fees"] = {"tenant_pays_landlord": bool(re.search(r"tenant shall pay|tenant will pay|tenant must pay|"
-                                                                         r"tenant agrees to pay", clause, re.IGNORECASE)),
-                                  "reciprocal_in_text": reciprocal, "clause": excerpt(clause)}
+                                                                         r"tenant agrees to pay", attorney, re.IGNORECASE)),
+                                  "reciprocal_in_text": reciprocal, "clause": excerpt(attorney)}
 
     facts["auto_renewal"] = bool(re.search(r"automatic(ally)? renew", text, re.IGNORECASE))
     facts["mentions_rent_stabilization"] = bool(re.search(r"rent[- ]stabiliz", text, re.IGNORECASE))

@@ -131,6 +131,32 @@ def test_amounts_over_the_cap_are_still_flagged():
         assert money_flags(clause, words), f"over-the-cap clause was not flagged: {clause!r}"
 
 
+def test_real_lease_shape():
+    """Premises address in a combined apartment/term clause (a house-number range and a bare unit),
+    the landlord's business address elsewhere, and a dollar-amount deposit."""
+    text = (Path(__file__).parent / "fixtures" / "lease_real_shape.txt").read_text()
+    r = json.loads(run_tool("review_lease", {}, {"lease_text": text}))
+    assert "error" not in r, r
+    # The premises address, not the landlord's office in Great Neck; and the note says which was used.
+    assert r["address"] == "155 East 92 Street", r.get("building_note")
+    assert "155 East 92nd Street" in r["building_note"] and "40 Harbor Road" in r["building_note"], r["building_note"]
+    assert r["extracted"]["unit"] == "4N", r["extracted"]["unit"]
+    assert r["extracted"]["landlord_name"] == "Sample Gardens LLC", r["extracted"]["landlord_name"]
+    # The deposit flag quotes the deposit sentence, not the apartment/term paragraph.
+    deposit = [f for f in r["flags"] if "deposit" in f["explanation"] and f["severity"] == "likely not allowed under NY law"]
+    assert deposit, r["flags"]
+    quote = deposit[0]["clause_excerpt"]
+    assert "security deposit" in quote and "$6,000.00" in quote and "term" not in quote.lower(), quote
+    # The late charge is capped by the lease itself: no late-fee flag.
+    assert not [f for f in r["flags"] if "late fee" in f["explanation"]], r["flags"]
+    # Every flag's excerpt is text from the lease.
+    flat = " ".join(text.split())
+    for f in r["flags"]:
+        if f["clause_excerpt"] and not f["clause_excerpt"].startswith(("Landlord:", "Apartment ")):
+            assert f["clause_excerpt"].rstrip(".…").split(" | ")[0][:80] in flat, f["clause_excerpt"]
+    return r
+
+
 def test_no_lease():
     r = json.loads(run_tool("review_lease", {}, {}))
     assert r["error"].startswith("No lease"), r
@@ -154,6 +180,8 @@ if __name__ == "__main__":
     test_caps_written_into_the_lease_are_not_flagged()
     test_amounts_over_the_cap_are_still_flagged()
     print("Caps written into a lease aren't flagged; amounts over the cap still are.")
+    shape = test_real_lease_shape()
+    print(f"Real-lease shape: {shape['building_note']}")
     test_no_lease()
     test_scanned_pdf_message()
     print("All lease tests passed.\n")

@@ -1,0 +1,25 @@
+[FICTIONAL SAMPLE — not a real lease]
+Anonymised test fixture with the structure of a real NYC lease. Names and amounts are invented.
+
+APARTMENT LEASE
+
+Landlord: Sample Gardens LLC
+c/o Sample Management, 40 Harbor Road, Great Neck, NY 11021
+Tenant: Alex Example
+
+1. APARTMENT AND TERM. Landlord rents to Tenant and Tenant rents from Landlord the apartment at
+155 157 East 92nd Street, 4N, New York, NY 10128 for a term of one year (12 months), beginning
+on September 1, 2026 and ending on August 31, 2027, at a monthly rent of $3,000.00.
+
+2. RENT. Tenant shall pay the monthly rent of $3,000.00 in advance on the first day of each month.
+
+3. SECURITY. Tenant has given Landlord a security deposit of $6,000.00, which Landlord will hold
+in a New York bank and return within fourteen (14) days after the lease ends.
+
+4. LATE CHARGE. If rent is not paid within five (5) days after it is due, Tenant shall pay a
+reasonable late charge of the lesser of fifty (50) dollars or five percent (5%) of the monthly rent.
+
+5. NOTICES. All notices to Landlord shall be sent to Sample Gardens LLC, 40 Harbor Road,
+Great Neck, NY 11021.
+
+THERE IS NO MAINTAINED AND OPERATIVE SPRINKLER SYSTEM IN THE LEASED PREMISES.
