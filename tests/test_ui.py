@@ -159,8 +159,23 @@ def main():
         labels = sorted(page.locator(".leaflet-tooltip.station-label").all_inner_texts())
         assert len(labels) == 3 and len(set(labels)) == 3 and all(" · " in l for l in labels), labels
         assert page.locator(".card", has_text="Night walks · 3 stations").locator("li").count() == 3
+        assert "Reported incidents, 9pm–5am, in the 12 months to " in page.inner_text(".card:has-text('Night walks')")
         page.screenshot(path=str(Path(__file__).parent.parent / "scratch" / "shots" / "three_walks.png"))
         print(f"ok  3 night walks: 3 routes, 3 station markers, labels {labels}, one card row each")
+        # 13. "All the options" (no line): every walkable station is drawn, with the window on the card.
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.goto(BASE)
+        page.fill("#input", "What are all the night walk options to 155 East 92nd Street, Manhattan?")
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=180_000) as reply:
+            page.click("#send")
+        page.wait_for_selector("path.walk-route")
+        page.wait_for_timeout(500)
+        routes = page.locator("path.walk-route").count()
+        assert routes > 1, f"all options should draw several routes, drew {routes}"
+        card_text = page.inner_text(".card:has-text('Night walks')")
+        assert "Reported incidents, 9pm–5am, in the 12 months to " in card_text, card_text
+        page.screenshot(path=str(Path(__file__).parent.parent / "scratch" / "shots" / "all_walks.png"))
+        print(f"ok  all night-walk options: {routes} routes drawn, window shown on the card")
         browser.close()
     print("All UI tests passed.")
 

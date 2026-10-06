@@ -1529,7 +1529,47 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
         raise ToolError(f"after_hour must be 21-23 (got {after_hour}).",
                         "The comparison data covers 9pm-5am; use 21, 22 or 23.")
 
-    st = find_station(station, line, b, snap["stations"])
+    if line or station:
+        return walk_report(b, find_station(station, line, b, snap["stations"]), after_hour, snap, state)
+
+    # No line or station named: every station within a short walk, so "the walk home" or "all the
+    # options" covers each way home, not just the nearest stop.
+    candidates = walkable_stations(b, snap["stations"])
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        walks = list(pool.map(lambda st: walk_report(b, st, after_hour, snap, state), candidates))
+    walks = [{k: v for k, v in w.items() if k != "duplicate"} for w in walks]
+    walks.sort(key=lambda w: w["walk"]["minutes"])
+    first = walks[0]
+    return {
+        "address": b.label,
+        "stations_checked": len(walks),
+        "how_chosen": (f"Every subway station within a {WALKABLE_MINUTES}-minute walk (the nearest is always "
+                       "included), each checked separately."),
+        "hours_checked": first["hours_checked"],
+        "period": first["period"],
+        "window": first["window"],
+        "walks": walks,
+        "summary": "; ".join(w["summary"] for w in walks),
+        "note": first["note"],
+    }
+
+
+WALKABLE_MINUTES = 15
+MAX_STATIONS = 6
+
+
+def walkable_stations(b: nyc.Building, stations: list[dict]) -> list[dict]:
+    """Stations within a WALKABLE_MINUTES walk (at least the nearest), one per station entrance on the map."""
+    ranked = sorted(({**st, "_m": nyc.miles_between(b.lat, b.lon, st["lat"], st["lon"]) * 1609.34} for st in stations),
+                    key=lambda st: st["_m"])
+    max_m = WALKABLE_MINUTES * WALK_M_PER_MIN / DETOUR
+    close = [st for st in ranked if st["_m"] <= max_m] or ranked[:1]
+    unique = list({station_key(st): st for st in close}.values())
+    return unique[:MAX_STATIONS]
+
+
+def walk_report(b: nyc.Building, st: dict, after_hour: int, snap: dict, state: dict) -> dict:
+    """One station-to-door walk: incidents along it, where they fell, and how it compares."""
     # Several spellings ("2 train", "110 St", "Malcolm X Plaza") can resolve to the same station:
     # answer from the first check instead of running it again.
     key = (b.bbl, station_key(st), after_hour)
@@ -1574,9 +1614,10 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
 
     minutes = round(straight_m * DETOUR / WALK_M_PER_MIN)
     hours = f"{after_hour - 12}pm-5am"
+    window_phrase = f"{after_hour - 12}pm–5am, in the 12 months to {window[1]}"
     by_type = dict(Counter(label(p[4]) for p in on_route).most_common())
-    summary = (f"{n} reported street incident(s) between {hours} along the ~{minutes}-min walk from "
-               f"{station_label(st)} in the 12 months to {window[1]}; "
+    summary = (f"{n} reported street incident{'s' if n != 1 else ''} ({window_phrase}) along the ~{minutes}-min walk "
+               f"from {station_label(st)}; "
                f"of similar-length walks from NYC stations, {share_with_more(baseline)}% had more and "
                f"{share_with_same(baseline)}% had the same number.")
     result = {
@@ -1586,6 +1627,7 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
                  "route_lat_lon": [[round(start[0], 6), round(start[1], 6)], [round(end[0], 6), round(end[1], 6)]]},
         "hours_checked": hours,
         "period": {"from": window[0], "to": window[1]},
+        "window": window_phrase,  # quote this with every incident count: the NYPD lag moves the end date
         "incidents_on_route": n,
         "by_type": by_type,
         "where_on_route": dict(thirds),
@@ -1816,12 +1858,13 @@ TOOLS = [
         "function": {
             "name": "night_walk_check",
             "description": (
-                "Is the area safe at night / how's the walk home from the subway? Picks a subway station (the "
-                "nearest by default, the nearest on a given line, or a named one near the building), estimates the "
-                "walk, and counts reported street incidents (robbery, felony assault, sex crimes, theft from a "
-                "person, shootings) along that route at night over the latest 12 months of NYPD data, where on the "
-                "route they happened, and how that compares with similar walks from other stations. For several "
-                "lines, call it once per line in the same turn."),
+                "Is the area safe at night / how's the walk home from the subway? Counts reported street incidents "
+                "(robbery, felony assault, sex crimes, theft from a person, shootings) along the walk from a "
+                "station to the building at night over the latest 12 months of NYPD data, where on the route they "
+                "happened, and how that compares with similar walks. Which stations: with NO line or station, it "
+                "checks EVERY station within a 15-minute walk (up to 6) and returns them all in 'walks' (use this for "
+                "'the walk home', 'all the options', 'is the area safe'); with line, the nearest station on that "
+                "line; with station, that named station. For specific lines, call it once per line in the same turn."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1830,7 +1873,8 @@ TOOLS = [
                              "description": "A subway line, e.g. '2', 'C', 'Q': uses the nearest station on that line. Prefer this when the user names a train."},
                     "station": {"type": "string",
                                 "description": ("A station name the user gave, e.g. '96 St'. Only stations within ~1.2 miles of "
-                                                "the building are considered; an unclear name returns the candidates. Omit for the nearest.")},
+                                                "the building are considered; an unclear name returns the candidates. Omit "
+                                                "(with no line) to check every walkable station.")},
                     "after_hour": {"type": "integer", "minimum": 21, "maximum": 23,
                                    "description": "Start of the night window on a 24-hour clock (window ends 5am). Default 21 (9pm)."},
                 },

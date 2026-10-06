@@ -401,7 +401,7 @@ function gist(name, r) {
     case "estimate_sunlight": return r.sides ? `floor ${r.floor} · ${r.sides.length} sides` : "floor sweep";
     case "fact_check_listing": return `${(r.claims || []).length} claims`;
     case "review_lease": return `${(r.flags || []).length} flags`;
-    case "night_walk_check": return `${r.incidents_on_route} incidents · ${r.walk?.minutes} min`;
+    case "night_walk_check": return r.walks ? `${r.walks.length} stations` : `${r.incidents_on_route} incidents · ${r.walk?.minutes} min`;
     case "draft_repair_request": return `${(r.cited_violations || []).length} violations cited`;
   }
   return "";
@@ -567,8 +567,9 @@ function absorb(calls) {
     const r = parse(c.result);
     if (r.error) continue;
     if (c.name === "night_walk_check" && r.address && !r.duplicate) {
+      // One call with no line returns every walkable station in r.walks; one per line returns a single walk.
       const list = (turnWalks[r.address] = turnWalks[r.address] || []);
-      if (!list.some((w) => walkKey(w) === walkKey(r))) list.push(r);
+      for (const w of r.walks || [r]) if (w.walk && !list.some((x) => walkKey(x) === walkKey(w))) list.push(w);
     }
     if (c.name === "review_lease") { leaseResult = r; }
     if (c.name === "draft_repair_request") { letterResult = r; }
@@ -743,21 +744,25 @@ function cardSweep(f) {
     "Rounded to the nearest half hour.");
 }
 
+function walkWindow(w) {
+  // The tool's own period, so the NYPD lag's moving end date is always right.
+  return w.window ? `Reported incidents, ${w.window}` :
+    `Reported incidents, ${(w.hours_checked || "").replace("-", "–")}, in the 12 months to ${w.period?.to}`;
+}
 function cardWalk(f) {
-  const walks = f.night_walks || (f.night_walk_check ? [f.night_walk_check] : []);
+  const walks = f.night_walks || (f.night_walk_check?.walk ? [f.night_walk_check] : []);
   if (!walks.length) return "";
   const note = "Reported incidents only. NYPD locations are approximate; each route is a straight-line corridor. Describes places and times, not people.";
+  const period = `<div class="vs walk-window"><b>${esc(walkWindow(walks[0]))}</b></div>`;
   if (walks.length > 1) {
     const rows = walks.map((w, i) => `<li><span><i style="display:inline-block;width:10px;height:3px;background:${WALK_COLORS[i % WALK_COLORS.length]};vertical-align:middle;margin-right:6px"></i>${esc(w.station?.name)} · ${esc((w.station?.lines || []).join(" "))}</span>
       <span>~${w.walk?.minutes} min · ${w.incidents_on_route} incident${w.incidents_on_route === 1 ? "" : "s"}</span></li>`).join("");
-    return card(`Night walks · ${walks.length} stations · ${esc(walks[0].hours_checked)}`,
-      `<ul class="list">${rows}</ul><div class="vs" style="margin-top:6px">${esc(walks[0].period?.from)} to ${esc(walks[0].period?.to)}</div>`, note, true);
+    return card(`Night walks · ${walks.length} stations`, `${period}<ul class="list">${rows}</ul>`, note, true);
   }
   const r = walks[0];
   const cmp = r.comparison?.citywide || {};
   return card(`Night walk · ${esc(r.station?.name)} (${esc((r.station?.lines || []).join(" "))})`,
-    `<div class="big">${r.incidents_on_route} <small>reported street incidents · ${esc(r.hours_checked)}</small></div>
-     <div class="vs">~${r.walk?.minutes} min walk · ${esc(r.period?.from)} to ${esc(r.period?.to)}</div>
+    `${period}<div class="big">${r.incidents_on_route} <small>reported street incident${r.incidents_on_route === 1 ? "" : "s"} · ~${r.walk?.minutes} min walk</small></div>
      <div class="vs">Of ${fmt(cmp.walks_compared, 0)} similar-length walks from NYC stations, ${cmp.share_with_more_incidents_pct}% had more and ${cmp.share_with_same_count_pct}% the same.</div>
      <div class="chips">${Object.entries(r.by_type || {}).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("")}</div>`,
     note);

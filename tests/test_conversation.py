@@ -6,6 +6,7 @@ forged session IDs, and the lease upload paths.
 """
 
 import json
+import re
 import sys
 import time
 import uuid
@@ -180,6 +181,16 @@ check("tool-call limit" not in s["response"], "must finish with an answer, not t
 ending = s["response"].strip().split("\n")[-1]
 check("Cathedral Pkwy" in ending and "C" in ending,
       f"should end by recommending the C at Cathedral Pkwy (2 min, 0 incidents); ended with: {ending[:200]}")
+
+# --- "All the options": every walkable station, and every count carries its window ---
+print("\n=== night walk: all options")
+s = chat("What are all the night walk options to 155 East 92nd Street, Manhattan?", fresh(), "night walk: all options")
+walk_results = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "night_walk_check"]
+stations = {(w["station"]["name"], tuple(w["station"]["lines"])) for r in walk_results for w in (r.get("walks") or [r]) if "station" in w}
+check(len(stations) > 1, f"all options should cover several stations, got {stations}")
+counted = [ln for ln in re.split(r"(?<=[.!?])\s+|\n", s["response"]) if re.search(r"\b\d+\s+(reported\s+)?(street\s+)?incidents?\b", ln)]
+bare = [ln for ln in counted if not re.search(r"12 months|2026", ln)]
+check(not bare, f"every incident count needs its window; bare: {bare[:3]}")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")
