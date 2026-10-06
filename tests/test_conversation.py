@@ -73,7 +73,8 @@ check("fact_check_listing" in tools_used(s) or "estimate_sunlight" in tools_used
 
 s = chat("Is that normal for the area?", sid1, "4 follow-up: area")
 s = chat("Which floor would I need for winter sun?", sid1, "5 follow-up: winter sun")
-check(any(c["name"] == "estimate_sunlight" and str(c["args"].get("floor")) == "all" for c in s["tool_calls"]),
+# A sweep: floor='all', or floor omitted (the tool's default is 'all').
+check(any(c["name"] == "estimate_sunlight" and str(c["args"].get("floor", "all")) == "all" for c in s["tool_calls"]),
       "5 should sweep floors")
 s = chat("My bathroom ceiling has been leaking for months. Write a letter to my landlord.", sid1, "6 repair letter")
 check("draft_repair_request" in tools_used(s), "6 should draft the letter")
@@ -231,6 +232,23 @@ letters = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "dra
 check(any("letter_text" in r for r in letters), "a stated problem in casual words must produce a letter")
 check(not re.search(r"smoke|carbon monoxide|mold|roach|mice", " ".join(r.get("letter_text", "") for r in letters),
                     re.IGNORECASE), "the letter must not add conditions the tenant never mentioned")
+
+# --- Stay in the domain: redirect off-topic questions, still answer tenant questions ---
+print("\n=== domain")
+s = chat("explain what linear regression is", fresh(), "domain: off-topic")
+check(not s["tool_calls"], f"an off-topic question should call no tools (called {tools_used(s)})")
+check(len(s["response"]) < 500, f"an off-topic redirect should be short ({len(s['response'])} chars)")
+check(bool(re.search(r"apartment|building|NYC|New York", s["response"])), "the redirect should say what it covers")
+check(not re.search(r"slope|intercept|dependent variable|least squares", s["response"], re.IGNORECASE),
+      "the redirect must not teach the off-topic subject")
+s = chat("What's the most a landlord in NYC can charge me for a security deposit?", fresh(), "domain: tenant rights")
+check(bool(re.search(r"one month", s["response"], re.IGNORECASE)) and len(s["response"]) > 150,
+      "a tenant-rights question should get a real answer (one month's rent)")
+s = chat("How do HPD violation classes work?", fresh(), "domain: HPD classes")
+check(bool(re.search(r"class\s*C", s["response"], re.IGNORECASE)) and "hazard" in s["response"].lower(),
+      "an HPD question should get a real answer (class C = immediately hazardous)")
+for answer in (s["response"],):
+    check(not re.search(r"\$\$|\$[A-Za-z\\]", answer), "answers should contain no LaTeX")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")

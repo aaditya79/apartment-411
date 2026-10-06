@@ -192,6 +192,21 @@ def main():
             page.wait_for_timeout(300)
             assert page.locator(".progress").count() == 0 and page.locator("#panel-skeleton").count() == 0, mode
         print("ok  a failing or empty /progress never blocks or hides the answer")
+        # 15. Stray LaTeX becomes plain text; dollar amounts are never touched.
+        page = browser.new_context().new_page()
+        page.goto(BASE)
+        cases = {
+            "$$$y = mx + b$$": "y = mx + b",
+            "where $m$ is the slope": "where m is the slope",
+            "$$\\frac{rent}{income} \\times 100$$": "(rent)/(income) × 100",
+            "Rent is $3,000 and the deposit is $3,000.": "Rent is $3,000 and the deposit is $3,000.",
+            "Fees: $20 late fee, $50 move-in ($70 total).": "Fees: $20 late fee, $50 move-in ($70 total).",
+            "Between $2,500 and $3,100/mo, about $36,000 a year": "Between $2,500 and $3,100/mo, about $36,000 a year",
+        }
+        for raw, want in cases.items():
+            got = page.evaluate("mathToText", raw)
+            assert got == want, (raw, got, want)
+        print("ok  stray $…$ math is stripped to plain text; dollar amounts are untouched")
         browser.close()
     print("All UI tests passed.")
 
