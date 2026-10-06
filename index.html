@@ -208,7 +208,7 @@ svg text { font-family: var(--mono); }
         </div>
         <div class="examples-title">Try one</div>
         <div class="examples" id="examples"></div>
-        <p class="story">Why this exists: I ran it on my own building, 184 Claremont Ave. It found smoke and carbon-monoxide detector violations open since March 2020, failed rat inspections, and a landlord with 15 other buildings, some far worse. It also told me my street-side windows only get afternoon sun. The "morning sun" I thought I had was light reflected off the buildings across the street.</p>
+        <p class="story">Why this exists: I ran it on my own building. It found smoke and carbon-monoxide detector violations open since March 2020, failed rat inspections, and a landlord with 15 other buildings, some far worse. It also told me my street-side windows only get afternoon sun. The "morning sun" I thought I had was light reflected off the buildings across the street.</p>
         <p class="fineprint">Data: NYC Open Data (HPD, Health Dept., NYPD, DOB footprints), the city's GeoSearch geocoder, MTA stations and OpenStreetMap. Full records exist for HPD-registered rentals with 3+ apartments. Records can lag and "open" doesn't always mean unfixed. Not legal advice.</p>
       </div>
       <div id="messages" aria-live="polite"></div>
@@ -249,12 +249,12 @@ svg text { font-family: var(--mono); }
 <script>
 // ---------- Content ----------
 const EXAMPLES = [
-  { k: "Should I rent here?", text: "I'm thinking of renting at 184 Claremont Ave in Manhattan. Should I worry about anything?" },
-  { k: "The landlord", text: "Who owns 184 Claremont Ave in Manhattan, and how do they treat tenants in their other buildings?" },
-  { k: "Fact-check a listing", text: "The listing says 'sun-drenched 4th floor in a well-maintained building' for 184 Claremont Ave. Is that true?" },
+  { k: "Should I rent here?", text: "I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?" },
+  { k: "The landlord", text: "Who owns 155 East 92nd Street in Manhattan, and how do they treat tenants in their other buildings?" },
+  { k: "Fact-check a listing", text: "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?" },
   { k: "Review a lease", text: "Try a sample lease", lease: true },
-  { k: "Get a repair made", text: "I live at 184 Claremont Ave, Manhattan. My bathroom ceiling has been leaking for months. Write a letter to my landlord." },
-  { k: "The walk home", text: "How safe is the walk home from the subway at night to 184 Claremont Ave, Manhattan?" },
+  { k: "Get a repair made", text: "I live at 155 East 92nd Street, Manhattan. My bathroom ceiling has been leaking for months. Write a letter to my landlord." },
+  { k: "The walk home", text: "How safe is the walk home from the subway at night to 155 East 92nd Street, Manhattan?" },
 ];
 const TOOL_LABELS = {
   look_up_building: "Building lookup", check_maintenance_record: "Maintenance record", get_tenant_complaints: "Tenant complaints",
@@ -452,7 +452,7 @@ async function trySampleLease() {
   setSession(body.session_id);
   const chip = $("attach-chip");
   chip.style.display = "block";
-  chip.textContent = "📎 Lease attached: fictional sample lease (184 Claremont Ave, Apt 4B)";
+  chip.textContent = "📎 Lease attached: fictional sample lease (155 East 92nd Street, Apt 4B)";
   send("Review my lease");
 }
 
@@ -500,7 +500,7 @@ function renderHead(f) {
   const addr = shownAddress || (leaseResult && leaseResult.address) || "Your lease";
   if (!b) { $("file-head").innerHTML = `<div class="label">Building file</div><h2>${esc(addr)}</h2>`; return; }
   const reg = b.hpd_registered ? `HPD registration: ${esc(b.registration?.status)}` : "Not HPD-registered";
-  const owner = b.registered_contacts?.owner_company?.[0]?.name || b.registered_contacts?.owner_person?.[0]?.name || b.owner_of_record;
+  const owner = b.registered_contacts?.owner_company?.[0]?.name || b.registered_contacts?.owner_person?.[0]?.name || b.owner_on_tax_records;
   const agent = b.registered_contacts?.managing_agent?.[0]?.name;
   $("file-head").innerHTML = `<div class="label">Building file · ${esc(b.neighborhood || "")}${b.borough ? ", " + esc(b.borough) : ""}</div>
     <h2>${esc(b.address)}</h2>
@@ -734,7 +734,7 @@ function renderMap(f) {
 }
 
 // ---------- Start ----------
-$("examples").innerHTML = EXAMPLES.map((e, i) => `<button class="example${e.lease ? " lease" : ""}" data-i="${i}"><span class="k">${esc(e.k)}</span>${esc(e.lease ? "Try a sample lease (fictional, for 184 Claremont Ave Apt 4B)" : e.text)}</button>`).join("");
+$("examples").innerHTML = EXAMPLES.map((e, i) => `<button class="example${e.lease ? " lease" : ""}" data-i="${i}"><span class="k">${esc(e.k)}</span>${esc(e.lease ? "Try a sample lease (fictional, for 155 East 92nd Street Apt 4B)" : e.text)}</button>`).join("");
 $("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => { const e = EXAMPLES[b.dataset.i]; e.lease ? trySampleLease() : send(e.text); }));
 
 // Resume after a refresh: the server knows the session from its cookie.

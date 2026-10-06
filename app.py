@@ -42,7 +42,9 @@ conversation. If a tool returns an error, say what couldn't be checked and follo
 - Sun times are approximate ranges; mention that reflected light isn't counted when brightness matters.
 - Crime: report counts with their context and period only. Never call a place or its residents dangerous or safe, \
 and never mention demographics.
-- Talk about named people neutrally: report what the records say, never judge character or intent.
+- Talk about named people neutrally: report what the records say, never judge character or intent. Refer to a \
+person by name or "they"; never guess anyone's gender.
+- Copy names, numbers, IDs and dates exactly as the tool returned them (e.g. an LLC's name character for character).
 - This is not legal advice; point to the official sources the tools return.
 
 Format for a building report: a one-sentence verdict, then "🚩 Red flags", then "✅ Green flags", then three \
@@ -291,11 +293,10 @@ def clear(response: Response, session_id: str | None = None, a411_session: str |
 
 # --- Demo warm-up ---
 
-WARM_UP_ADDRESSES = ["184 Claremont Ave, Manhattan"]
+WARM_UP_ADDRESSES = ["155 East 92nd Street, Manhattan"]
 WARM_UP_CALLS = [("check_maintenance_record", {}), ("get_tenant_complaints", {}), ("check_pests", {}),
                  ("check_evictions_and_court", {}), ("get_landlord_portfolio", {}), ("get_neighborhood_context", {}),
                  ("estimate_sunlight", {"floor": "4"}), ("estimate_sunlight", {"floor": "all"}), ("night_walk_check", {}),
-                 ("night_walk_check", {"station": "116 St-Columbia University"}),
                  ("fact_check_listing", {"listing_text": "sun-drenched 4th floor in a well-maintained building", "floor": "4"}),
                  ("draft_repair_request", {"issues": ["water_leak", "paint_plaster"]})]
 

@@ -25,7 +25,7 @@ def test_planted_issues():
     r = review_sample()
     assert "error" not in r, r
     assert r["is_sample"]
-    assert r["address"] == "184 Claremont Avenue"
+    assert r["address"] == "155 East 92 Street"
     assert r["extracted"]["unit"] == "4B", r["extracted"]["unit"]
     assert r["extracted"]["term"]["start"] == "2026-11-01" and r["extracted"]["term"]["months_stated"] == 12
     checks = {
@@ -35,7 +35,7 @@ def test_planted_issues():
         "one-sided attorney's fees": flag_with(r, "check with landlord", "attorney"),
         "rent $2,850 vs $2,950": flag_with(r, "inconsistent", "$2,850.00", "$2,950.00"),
         "landlord name != HPD registration": flag_with(r, "check with landlord", "example realty llc",
-                                                       "184-188 claremont investors"),
+                                                       "92nd street 6 llc"),
     }
     missing = {m["disclosure"] for m in r["missing_disclosures"]}
     checks["no bedbug disclosure"] = "bedbug history (previous year)" in missing or None
@@ -61,7 +61,7 @@ def test_fictional_label_on_every_section():
     assert not unlabeled, f"sections without the label: {unlabeled}"
     lines = text.strip().splitlines()
     assert lines[0].strip("[]") == lease.SAMPLE_LABEL and lines[-1].strip("[]") == lease.SAMPLE_LABEL
-    assert "Example Realty LLC" in text and "Claremont Gardens" not in text
+    assert "Example Realty LLC" in text 
 
 
 def test_label_survives_pdf():

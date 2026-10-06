@@ -18,27 +18,27 @@ It's built for someone about to sign a lease in NYC, or a current tenant whose l
 
 ## Why I built it
 
-I ran the first prototype on my own building, 184 Claremont Ave:
+I ran the first prototype on my own building:
 - **Open violations:** smoke and carbon-monoxide detector violations open since March 2020, with repairs taking a median of about 6 months.
 - **Rats:** failed rat inspections.
 - **Landlord:** a head officer with 15 other buildings, some far worse.
 
 That matched my experience: a landlord who's hard to reach and slow to make repairs.
 
-The sunlight model surprised me. My street-side windows, which face northwest onto Claremont Avenue, only get afternoon sun. I had assumed I got morning sun, but that was light reflected off the buildings across the street. ShadeMap agreed (see the validation below).
+The sunlight model surprised me. My street-side windows, which face northwest onto the street, only get afternoon sun. I had assumed I got morning sun, but that was light reflected off the buildings across the street. ShadeMap agreed (see the validation below).
 
 ## Sample queries for graders
 
 Run these three in order, in one session:
 
-1. "I'm thinking of renting at 184 Claremont Ave in Manhattan. Should I worry about anything?"
+1. "I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?"
 2. "Who owns this building, and how do they treat tenants in their other buildings?"
-3. "The listing says 'sun-drenched 4th floor in a well-maintained building' for 184 Claremont Ave. Is that true?"
+3. "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?"
 
 What to expect:
 - **Query 1** runs seven tools: the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It answers with a verdict, red flags, green flags and questions to ask.
-- **Query 2** reuses the landlord portfolio (16 buildings).
-- **Query 3** fact-checks the two claims. "Well-maintained" is not supported by city records. "Sun-drenched" can't be verified: the 4th floor's street side gets about 1.2 h of direct sun today, the rear end wall more, so it depends which way the apartment faces.
+- **Query 2** reuses the landlord portfolio: the head officer is registered on 18 buildings, and this one ranks 4th worst of the 15 with 6+ apartments.
+- **Query 3** fact-checks the two claims. "Well-maintained" is not supported by city records: 9 open violations, one immediately hazardous, one open since 2009. "Sun-drenched" can't be verified: the 4th floor's south-facing street side gets about 2.8 h of direct sun today, the court side much less, so it depends which way the apartment faces.
 
 The start screen also has buttons for a fictional sample lease, a repair letter and the night walk.
 
@@ -105,11 +105,11 @@ Each tool says how old the data it used is.
 
 ## Sunlight validation
 
-184 Claremont Ave, 4th floor, checked against [ShadeMap](https://shademap.app) and my own experience:
+My building, 4th floor, checked against [ShadeMap](https://shademap.app) and my own experience:
 
-- **Street side (Claremont Ave, facing northwest, ~299°):** the model gives about 1.2 h of direct sun on Oct 5 (range 0.9–1.8 h), roughly 2:20pm to 3:15–4:05pm. ShadeMap shows the street in sun at 2pm and the facade in shadow by 4pm. That matches ShadeMap within about 10–20 minutes.
+- **Street side (facing northwest, ~299°):** the model gives about 1.2 h of direct sun on Oct 5 (range 0.9–1.8 h), roughly 2:20pm to 3:15–4:05pm. ShadeMap shows the street in sun at 2pm and the facade in shadow by 4pm. That matches ShadeMap within about 10–20 minutes.
 - **Shaft-facing window** (side walls facing the ~3.7 m gaps to the neighbors): the model gives little or no direct sun, which matches my experience ("it's right next to the neighbouring building").
-- **Rear end wall** (8 m, facing southeast toward Broadway; about 4.2 h today in the model, because the buildings toward Broadway sit on lower ground): unvalidated.
+- **Rear end wall** (8 m, facing southeast; about 4.2 h today in the model, because the buildings behind sit on lower ground): unvalidated.
 
 ## Data sources
 
@@ -169,7 +169,7 @@ Optional extras:
 
 ```bash
 export NYC_OPEN_DATA_APP_TOKEN=…  # optional: a free NYC Open Data app token avoids throttling
-uv run python -m tools "184 Claremont Ave, Manhattan"   # every tool once, with timings
+uv run python -m tools "155 East 92nd Street, Manhattan"   # every tool once, with timings
 uv run python -m tests.test_sessions                    # session rules (no model calls)
 uv run python -m tests.test_lease                       # the sample lease's planted issues
 uv run python -m tests.test_conversation                # end to end, against a running server

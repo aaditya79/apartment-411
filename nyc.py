@@ -336,6 +336,16 @@ def _address_tokens(text: str) -> list[str]:
     return [_STREET_WORDS.get(w, w) for w in words]
 
 
+def _borough_asked(asked: str) -> str | None:
+    """The borough the user named, if any. 'New York, NY' is Manhattan's postal city
+    (the other boroughs use their own names), so it counts as Manhattan."""
+    words = _address_tokens(asked)
+    for word, name in _BOROUGH_HINTS.items():
+        if word in words:
+            return name
+    return "Manhattan" if re.search(r"\bnew york\b", asked, re.IGNORECASE) else None
+
+
 def _check_match(asked: str, label: str, borough: str) -> None:
     """Raise AddressError if the geocoder's label is not the place the user asked for."""
     if re.search(r"\s(&|and|at)\s|/", f" {asked.lower()} "):
@@ -345,16 +355,16 @@ def _check_match(asked: str, label: str, borough: str) -> None:
     label_words = set(_address_tokens(label.split(",")[0]))
 
     # A borough named in the question must be the borough we found.
-    for word, name in _BOROUGH_HINTS.items():
-        if word in asked_words and name != borough:
-            raise AddressError(f"'{asked}' matched '{label}' in {borough}, not {name}.", suggestion=f"{label} ({borough})")
+    wanted = _borough_asked(asked)
+    if wanted and wanted != borough:
+        raise AddressError(f"'{asked}' matched '{label}' in {borough}, not {wanted}.", suggestion=f"{label} ({borough})")
 
     house = asked_words[0] if asked_words and asked_words[0][0].isdigit() else None
     street = [w for w in asked_words[1 if house else 0:] if w not in _PLACE_WORDS and w not in _GENERIC]
     label_house = label.split()[0] if label[:1].isdigit() else None
 
     house_ok = house is None or house.split("-")[0] == (label_house or "").split("-")[0] or house == label_house
-    # Claremont Avenue and Clermont Place are different streets: if both name a
+    # Clermont Avenue and Clermont Place are different streets: if both name a
     # street type, the types must agree.
     asked_types, label_types = set(asked_words) & _STREET_TYPES, label_words & _STREET_TYPES
     type_ok = not (asked_types and label_types) or bool(asked_types & label_types)
@@ -391,8 +401,8 @@ def geocode(address: str, need_lot: bool = True) -> dict:
     if not features:
         raise AddressError(f"No NYC address matched '{address}'.")
 
-    # The top hit ignores the borough you typed ("184 Clermont Ave, Brooklyn" ->
-    # Staten Island first), so check all 5 candidates against what was asked.
+    # The top hit can ignore the borough you typed (a Brooklyn "Clermont Ave" came
+    # back as Staten Island's Clermont Place first), so check all 5 candidates against what was asked.
     matches, first_error = [], None
     for feature in features:
         props = feature["properties"]
@@ -411,7 +421,7 @@ def geocode(address: str, need_lot: bool = True) -> dict:
     # "100 Broadway" exists in Manhattan and Brooklyn. Without a borough or zip to
     # decide, ask rather than guess.
     words = _address_tokens(address)
-    has_hint = any(w in _BOROUGH_HINTS for w in words) or any(re.fullmatch(r"\d{5}", w) for w in words)
+    has_hint = _borough_asked(address) is not None or any(re.fullmatch(r"\d{5}", w) for w in words)
     boroughs = {b: lab for _, lab, b in matches}
     if not has_hint and len(boroughs) > 1:
         options = [f"{lab} ({b})" for b, lab in boroughs.items()]
@@ -580,7 +590,7 @@ def load_snapshot() -> dict:
 if __name__ == "__main__":
     import sys
 
-    tests = sys.argv[1:] or ["184 Claremont Ave, Manhattan", "2053 Frederick Douglass Blvd, Manhattan",
+    tests = sys.argv[1:] or ["155 East 92nd Street, Manhattan", "2053 Frederick Douglass Blvd, Manhattan",
                              "350 East 30th Street, Manhattan"]
     for addr in tests:
         print(f"\n===== {addr} =====")

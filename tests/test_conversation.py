@@ -47,7 +47,7 @@ def tools_used(body: dict) -> list[str]:
 
 
 # --- Session 1: the README queries and follow-ups ---
-s1 = chat("I'm thinking of renting at 184 Claremont Ave in Manhattan. Should I worry about anything?", None, "1 README q1")
+s1 = chat("I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?", None, "1 README q1")
 sid1 = s1["session_id"]
 check("look_up_building" in tools_used(s1), "q1 should look up the building")
 check({"check_maintenance_record", "get_landlord_portfolio"} <= set(tools_used(s1)), "q1 should run the report tools")
@@ -57,7 +57,7 @@ check(s["session_id"] == sid1, "q2 should stay in session 1")
 check("get_landlord_portfolio" in tools_used(s) or "get_landlord_portfolio" in tools_used(s1),
       "q2 should use the portfolio (now or from q1)")
 
-s = chat("The listing says 'sun-drenched 4th floor in a well-maintained building' for 184 Claremont Ave. Is that true?",
+s = chat("The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?",
          sid1, "3 README q3")
 check("fact_check_listing" in tools_used(s) or "estimate_sunlight" in tools_used(s), "q3 should check the listing")
 
@@ -76,7 +76,7 @@ check(not any(w in s["response"].lower() for w in ("blocks from", "few blocks", 
       "7 must not make up commute distances or times")
 
 # --- Session 2: a fresh comparison; session 1 must be untouched ---
-s2 = chat("Compare 184 Claremont Ave and 2053 Frederick Douglass Blvd, both in Manhattan", None, "8 new session: compare")
+s2 = chat("Compare 155 East 92nd Street and 2053 Frederick Douglass Blvd, both in Manhattan", None, "8 new session: compare")
 check(s2["session_id"] != sid1, "8 should get a new session")
 s = chat("What building were we talking about, and what did the sun check say?", sid1, "8b session 1 still intact")
 check(s["session_id"] == sid1, "8b should resume session 1")

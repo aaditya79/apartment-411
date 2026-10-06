@@ -8,7 +8,7 @@ Tools that look at a building take an optional `address`. When it is omitted the
 use the building already being discussed, kept in the session's `state` by the
 harness. The model never sees or passes BBLs or registration IDs.
 
-Run `uv run python -m tools "184 Claremont Ave, Manhattan"` to try every tool.
+Run `uv run python -m tools "155 East 92nd Street, Manhattan"` to try every tool.
 """
 
 import json
@@ -52,7 +52,7 @@ def current_building(address: str | None, state: dict) -> nyc.Building:
             building = nyc.resolve_building(address)
         except AddressError as e:
             raise ToolError(e.message, (f"Ask the user to confirm: did they mean {e.suggestion}?" if e.suggestion else
-                                        "Ask the user for the house number, street and borough (e.g. '184 Claremont Ave, "
+                                        "Ask the user for the house number, street and borough (e.g. '155 East 92nd Street, "
                                         "Manhattan'). Intersections and neighborhood names can't be looked up."))
         state.setdefault("buildings", {})[building.bbl] = building
         state["current_bbl"] = building.bbl
@@ -133,7 +133,7 @@ def look_up_building(address: str, state: dict) -> dict:
         "year_built": b.year_built,
         "floors": b.floors,
         "building_type": b.bldgclass_label,
-        "owner_of_record": b.owner_name or None,
+        "owner_on_tax_records": b.owner_name or None,  # PLUTO: who the city taxes, can lag a sale
         "hpd_registered": b.is_registered,
         "lat": round(b.lat, 6),
         "lon": round(b.lon, 6),
@@ -145,6 +145,13 @@ def look_up_building(address: str, state: dict) -> dict:
         result["registered_contacts"] = b.contacts_by_role()
         result["note"] = ("Contacts are as registered with HPD; the head officer can be an employee of the "
                           "management company, not the owner. Report roles as registered.")
+        registered_owners = [c["name"] for role in ("owner_company", "owner_person")
+                             for c in result["registered_contacts"].get(role, [])]
+        if b.owner_name and registered_owners and not same_party(b.owner_name, registered_owners):
+            result["owner_names_differ"] = (
+                f"The tax records name '{b.owner_name}' as owner, but the HPD registration names "
+                f"'{registered_owners[0]}'. That can be an affiliated LLC or records that lag a sale; the HPD "
+                "registration is who answers for repairs.")
     else:
         result["note"] = (
             "This lot has no HPD registration. Registration covers rental buildings with 3+ apartments, so "
@@ -714,7 +721,7 @@ def site_for(b: nyc.Building) -> sun.Site:
 
 
 def street_name(b: nyc.Building) -> str:
-    """'184 Claremont Avenue' -> 'Claremont Avenue'."""
+    """'155 East 92 Street' -> 'East 92 Street'."""
     first = b.label.split(",")[0]
     return first.split(" ", 1)[1] if first[:1].isdigit() and " " in first else first
 
@@ -851,7 +858,7 @@ LISTING_CLAIMS = [
 ADDRESS_IN_TEXT = re.compile(
     r"\b(\d{1,5}(?:-\d{1,4})?\s+(?:(?:east|west|e\.?|w\.?|north|south)\s+)?[a-z0-9.' ]{2,40}?\s"
     r"(?:avenue|ave|street|st|boulevard|blvd|place|pl|road|rd|drive|dr|parkway|pkwy|terrace|ter|lane|ln|court|ct)\b\.?"
-    r"(?:,?\s*(?:apt\.?|apartment|unit|#)\s*\w+)?(?:,?\s*(?:manhattan|brooklyn|queens|bronx|the bronx|staten island|new york|ny))?)",
+    r"(?:,?\s*(?:apt\.?|apartment|unit|#)\s*\w+)?(?:,?\s*(?:manhattan|brooklyn|queens|bronx|the bronx|staten island|new york|ny))*(?:,?\s*\d{5})?)",
     re.IGNORECASE)
 FLOOR_IN_TEXT = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)[- ]floor\b|\bfloor\s+(\d{1,2})\b|\b(first|second|third|fourth|fifth|"
                            r"sixth|seventh|eighth|ninth|tenth)[- ]floor\b", re.IGNORECASE)
@@ -1094,6 +1101,11 @@ def same_party(lease_name: str, registered: list[str]) -> bool:
     mine = name_tokens(lease_name)
     for other in registered:
         theirs = name_tokens(other)
+        # "92nd Street 4 LLC" and "92nd Street 6 LLC" are different companies: numbers must agree.
+        numbers_mine = {w for w in mine if w.isdigit()}
+        numbers_theirs = {w for w in theirs if w.isdigit()}
+        if numbers_mine and numbers_theirs and numbers_mine != numbers_theirs:
+            continue
         if mine and theirs and len(mine & theirs) / len(mine | theirs) >= 0.5:
             return True
     return False
@@ -1404,7 +1416,7 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
 
 ADDRESS_ARG = {
     "type": "string",
-    "description": ("NYC street address with borough, e.g. '184 Claremont Ave, Manhattan'. Omit to use the "
+    "description": ("NYC street address with borough, e.g. '155 East 92nd Street, Manhattan'. Omit to use the "
                     "building already being discussed."),
 }
 
@@ -1422,7 +1434,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {"address": {
                     "type": "string",
-                    "description": ("House number, street and borough (or zip), e.g. '184 Claremont Ave, Manhattan' "
+                    "description": ("House number, street and borough (or zip), e.g. '155 East 92nd Street, Manhattan' "
                                     "or '45-17 21st St, Queens 11101'. Not an intersection or neighborhood name.")}},
                 "required": ["address"],
             },
@@ -1616,7 +1628,7 @@ TOOLS = [
                 "properties": {
                     "address": ADDRESS_ARG,
                     "station": {"type": "string",
-                                "description": "Station name if the user names one, e.g. '116 St-Columbia University'. Omit for the nearest."},
+                                "description": "Station name if the user names one, e.g. '96 St'. Omit for the nearest."},
                     "after_hour": {"type": "integer", "minimum": 21, "maximum": 23,
                                    "description": "Start of the night window on a 24-hour clock (window ends 5am). Default 21 (9pm)."},
                 },
@@ -1666,7 +1678,7 @@ if __name__ == "__main__":
     import sys
     import time
 
-    address = " ".join(sys.argv[1:]) or "184 Claremont Ave, Manhattan"
+    address = " ".join(sys.argv[1:]) or "155 East 92nd Street, Manhattan"
     state: dict = {}
     calls = [
         ("look_up_building", {"address": address}),
@@ -1677,12 +1689,12 @@ if __name__ == "__main__":
         ("check_evictions_and_court", {}),
         ("get_landlord_portfolio", {}),
         ("get_neighborhood_context", {}),
-        ("draft_repair_request", {"issues": ["water_leak", "paint_plaster"], "apartment": "2N",
+        ("draft_repair_request", {"issues": ["water_leak", "paint_plaster"], "apartment": "18",
                                   "details": "the bathroom ceiling has been leaking for months"}),
         ("estimate_sunlight", {"floor": "4"}),
         ("estimate_sunlight", {"floor": "all"}),
         ("fact_check_listing", {"listing_text": "Sun-drenched 4th floor 2BR in a well-maintained building at "
-                                                "184 Claremont Ave, Manhattan. Quiet block, steps to the subway, "
+                                                "155 East 92nd Street, Manhattan. Quiet block, steps to the subway, "
                                                 "heat included, responsive management."}),
     ]
     timings = []
