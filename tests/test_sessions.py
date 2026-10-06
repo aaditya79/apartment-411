@@ -167,6 +167,31 @@ def test_upload_formats_and_sizes():
     assert r.status_code == 200 and r.json()["is_sample"], r.text
 
 
+def test_picked_check_is_a_note_for_the_model_once():
+    seen = []
+    original = server.run_agent
+
+    def capture(messages, state):
+        seen.append(messages[-1]["content"])
+        return fake_agent(messages, state)
+
+    server.run_agent = capture
+    try:
+        client = TestClient(server.app)
+        sid = post_chat(client, "hello")["session_id"]
+        bad = client.post("/pick-tool", json={"tool": "delete_everything", "session_id": sid})
+        assert bad.status_code == 400 and "Unknown check" in bad.json()["error"]
+        assert client.post("/pick-tool", json={"tool": "estimate_sunlight", "session_id": sid}).json()["tool"] == "estimate_sunlight"
+        body = post_chat(client, "is it bright in the morning?", sid)  # /chat's shape is checked in post_chat
+        assert seen[-1].startswith("[Note from the app: the user picked the check estimate_sunlight") \
+            and seen[-1].endswith("is it bright in the morning?"), seen[-1]
+        assert server.sessions[sid]["turns"][-1]["user"] == "is it bright in the morning?", "history keeps my words"
+        post_chat(client, "and in winter?", sid)
+        assert "picked the check" not in seen[-1], "the pick applies to one message only"
+    finally:
+        server.run_agent = original
+
+
 def iap(email: str) -> dict:
     """The header IAP adds on Cloud Run."""
     return {"x-goog-authenticated-user-email": f"accounts.google.com:{email}"}

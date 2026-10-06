@@ -95,11 +95,13 @@ def main():
         assert listed == [t["name"] for t in served], listed
         sun = next(i for i, t in enumerate(served) if t["name"] == "estimate_sunlight")
         rows.nth(sun).click()
-        assert page.input_value("#input") == served[sun]["example"] and not chats
-        print("ok  'What I can check' lists exactly the 12 tools; a row drafts its question without sending")
+        assert page.input_value("#input") == "" and page.get_attribute("#input", "placeholder") == served[sun]["example"]
+        assert page.inner_text("#tool-chip").startswith("/estimate_sunlight") and not chats
+        page.click("#tool-chip .chip-x")  # × clears the chip and the hint
+        assert page.is_hidden("#tool-chip") and page.get_attribute("#input", "placeholder") != served[sun]["example"]
+        print("ok  'What I can check' lists exactly the 12 tools; a row picks the check (empty input, example as hint); × clears it")
 
-        # 9. The / menu opens, filters, and picking an item drafts its question without sending.
-        page.fill("#input", "")
+        # 9. The / menu opens, filters, and picking selects the check: empty input, example as placeholder, nothing sent.
         page.type("#input", "/")
         page.wait_for_selector("#slash button")
         assert page.locator("#slash button").count() == 12
@@ -107,18 +109,40 @@ def main():
         assert 1 <= page.locator("#slash button").count() < 12
         assert "Sunlight" in page.locator("#slash button").first.inner_text(), "name matches rank first"
         page.locator("#slash button").first.click()
-        assert page.input_value("#input") == served[sun]["example"] and page.is_hidden("#slash") and not chats
-        page.fill("#input", "")
-        page.type("#input", "/night")
-        page.keyboard.press("Enter")  # Enter picks from the menu; it never sends
-        night = next(t for t in served if t["name"] == "night_walk_check")
-        assert page.input_value("#input") == night["example"] and not chats
-        page.fill("#input", "")
+        assert page.input_value("#input") == "" and page.get_attribute("#input", "placeholder") == served[sun]["example"]
+        assert page.is_hidden("#slash") and page.is_visible("#tool-chip") and not chats
         page.type("#input", "/zzz")
         assert "No check matches" in page.inner_text("#slash")
         page.keyboard.press("Escape")
         assert page.is_hidden("#slash")
-        print("ok  / menu opens, filters, and picking (click or Enter) fills the input without sending")
+        page.fill("#input", "")
+        print("ok  / menu opens, filters, and picking selects the check without filling the input or sending")
+
+        # 10. With a check picked, my own words are sent, the model is steered to that tool, and the chip clears.
+        bodies, picks = [], []
+        page.on("request", lambda r: r.url.endswith("/chat") and bodies.append(json.loads(r.post_data)))
+        page.on("request", lambda r: r.url.endswith("/pick-tool") and picks.append(json.loads(r.post_data)))
+        mine = "is it bright in the morning on the 4th floor of 155 East 92nd Street, Manhattan?"
+        page.fill("#input", mine)
+        with page.expect_response(lambda r: r.url.endswith("/chat")) as reply:
+            page.click("#send")
+        assert bodies[-1]["message"] == mine and picks[-1]["tool"] == "estimate_sunlight", (bodies, picks)
+        assert page.is_hidden("#tool-chip"), "the chip clears after sending"
+        used = [c["name"] for c in reply.value.json()["tool_calls"]]
+        assert "estimate_sunlight" in used, used
+        page.wait_for_selector(".msg.bot .answer")
+        print("ok  typed question sent as typed, steered to the picked tool, chip cleared")
+
+        # 11. Picked check + empty input: send asks the example question.
+        page.type("#input", "/rats")
+        page.keyboard.press("Enter")
+        pests = next(t for t in served if t["name"] == "check_pests")
+        assert page.input_value("#input") == "" and page.get_attribute("#input", "placeholder") == pests["example"]
+        with page.expect_response(lambda r: r.url.endswith("/chat")):
+            page.click("#send")
+        assert bodies[-1]["message"] == pests["example"] and picks[-1]["tool"] == "check_pests"
+        assert page.is_hidden("#tool-chip")
+        print("ok  empty send with a picked check asks its example")
         browser.close()
     print("All UI tests passed.")
 

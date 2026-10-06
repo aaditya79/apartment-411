@@ -33,7 +33,7 @@ The start screen also has example buttons for the sunlight model, the neighborho
 
 ## The tools
 
-There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. The app shows the same list under "What I can check" on the start screen, and typing `/` in the chat box opens it as a menu. Picking a check only drafts an example question into the input; the model still decides which tools to call. Each tool:
+There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. The app shows the same list under "What I can check" on the start screen, and typing `/` in the chat box opens it as a menu. Picking a check shows it as a removable chip (e.g. `/estimate_sunlight ×`) and puts its example question in the input as a grey hint. You type your own question, or send it empty to ask the example. The pick is only a hint: it's passed to the model as a note to prefer that check if it fits, and the model still decides which tools to call. Each tool:
 - returns JSON with interpreted facts, their context (per apartment, vs the area, over what period) and a `note` with the caveat;
 - on failure, returns `{"error", "next_step"}` telling the model what to do next, never a stack trace;
 - takes an optional address, defaulting to the building being discussed, which the harness keeps in session state, so the model never handles city IDs.

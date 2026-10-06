@@ -39,6 +39,8 @@ you haven't looked up.
 ("the 2, the 1 and the C"), call it once per line with the line argument, all in the same turn.
 - "How much sun?" without a floor: call estimate_sunlight with no floor (it returns every floor on the street \
 side), then offer a detailed check once they tell you their floor.
+- If a message carries a note that the user picked a check from the menu, prefer that tool when it fits their \
+question. If it doesn't fit, say so in one line and use the tools that do. The pick is a hint, not an order.
 - You cannot plan commutes or estimate travel times or distances; if asked, say only that, and offer the night-walk check from the station they'd use. Never describe where places are from your own knowledge: no "a few blocks from campus", "walking distance", "close to the park". The only distances you may give are the walk minutes a tool returned.
 
 Rules:
@@ -304,8 +306,13 @@ def chat(request: ChatRequest, response: Response, http: Request, a411_session: 
             # A new address in the message becomes the building before any tool runs.
             tools.note_addresses_in_message(request.message, state)
 
-        # An upload happens outside the chat, so tell the model about it once, with the next message.
+        # Uploads and menu picks happen outside the chat, so tell the model about them once, with the next message.
         content = request.message
+        picked = session["state"].pop("picked_tool", None)
+        if picked:
+            entry = tools.TOOL_CATALOG[picked]
+            content = (f"[Note from the app: the user picked the check {picked} ({entry['label']}) from the menu; prefer "
+                       "it if it fits their question, and say so if it doesn't.]\n" + content)
         if session["state"].pop("lease_attached_note", None):
             content = ("[Note from the app: the user attached a lease to this conversation; review_lease can read "
                        "it.]\n" + content)
@@ -379,6 +386,24 @@ def sample_lease(request: SessionRequest, response: Response, http: Request,
     state["lease_name"], state["lease_attached_note"] = "fictional sample lease", True
     with_cookie(response, session_id)
     return {"status": "ok", "session_id": session_id, "is_sample": True, "name": state["lease_name"]}
+
+
+class PickRequest(BaseModel):
+    tool: str
+    session_id: str | None = None
+
+
+@app.post("/pick-tool")
+def pick_tool(request: PickRequest, response: Response, http: Request,
+              a411_session: str | None = Cookie(default=None)):
+    """The check the user picked from the / menu or the table, sent just before their message. It only
+    becomes a note to the model on the next /chat (a soft steer): the agent still decides what to call."""
+    if request.tool not in tools.TOOL_CATALOG:
+        return JSONResponse(status_code=400, content={"error": f"Unknown check '{request.tool}'."})
+    session_id = get_session(request.session_id or a411_session, http.state.visitor)
+    sessions[session_id]["state"]["picked_tool"] = request.tool
+    with_cookie(response, session_id)
+    return {"status": "ok", "session_id": session_id, "tool": request.tool}
 
 
 @app.post("/lease/clear")

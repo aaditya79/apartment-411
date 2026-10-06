@@ -123,6 +123,10 @@ details.capabilities > summary { cursor: pointer; font: 600 12px var(--mono); le
 @media (max-width: 860px) { .cap-table .data, .cap-table th.data { display: none; } }
 .attach-chip { display: none; align-items: center; gap: 8px; margin-bottom: 6px; font: 12px var(--mono); background: var(--accent); border: 1px solid var(--ink); padding: 2px 4px 2px 8px; border-radius: 2px; width: fit-content; max-width: 100%; }
 .attach-chip.error { background: #f6dcd8; }
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tool-chip { display: flex; background: var(--ink); color: var(--paper); }
+.tool-chip[hidden] { display: none; }
+.tool-chip .chip-x { background: var(--accent); color: var(--ink); }
 .attach-chip .chip-x { border: 0; background: var(--ink); color: var(--paper); width: 20px; height: 20px; line-height: 20px; border-radius: 2px; font: 600 14px var(--mono); flex: none; }
 .attach-chip .chip-x:hover { background: var(--bad); }
 .resume { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
@@ -238,7 +242,7 @@ svg text { font-family: var(--mono); }
             <thead><tr><th>Check</th><th>What it answers</th><th class="data">Data</th></tr></thead>
             <tbody id="cap-rows"><tr><td colspan="3">Loading…</td></tr></tbody>
           </table>
-          <p class="fineprint">⭐ = original to this project. Click a row to draft its question (it isn't sent). The assistant still decides which tools to run.</p>
+          <p class="fineprint">⭐ = original to this project. Click a row to pick that check, then ask your own question (or send to ask the example). The assistant still decides which tools to run.</p>
         </details>
         <form class="resume" id="resume-form">
           <label for="resume-id">Have a session ID? Paste it to continue a previous chat.</label>
@@ -253,7 +257,10 @@ svg text { font-family: var(--mono); }
     </div>
 
     <form class="composer" id="composer">
-      <div class="attach-chip" id="attach-chip"></div>
+      <div class="chips-row">
+        <div class="attach-chip tool-chip" id="tool-chip" hidden></div>
+        <div class="attach-chip" id="attach-chip"></div>
+      </div>
       <div class="composer-row">
         <button type="button" class="icon-btn" id="attach" title="Attach a lease (PDF, .docx or .txt, up to 20 MB)" aria-label="Attach a lease">📎</button>
         <input type="file" id="file" accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
@@ -261,7 +268,7 @@ svg text { font-family: var(--mono); }
         <button type="submit" class="send-btn" id="send">Ask</button>
       </div>
       <div class="slash-menu" id="slash" role="listbox" aria-label="Checks" hidden></div>
-      <div class="hint">Enter to send · Shift+Enter for a new line · type <b>/</b> to draft a question for a specific check (the assistant still decides which tools to run) · 📎 attach a lease (PDF, .docx or .txt, up to 20 MB)</div>
+      <div class="hint">Enter to send · Shift+Enter for a new line · type <b>/</b> to pick a check to steer your question (the assistant still decides which tools to run) · 📎 attach a lease (PDF, .docx or .txt, up to 20 MB)</div>
       <div class="hint first-load" id="first-load">First query may take up to a minute while city data loads.</div>
     </form>
   </section>
@@ -350,6 +357,7 @@ async function newSearch() {
   for (const k of Object.keys(files)) delete files[k];
   fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
   showLease(null);  // the old session (and its lease) is gone
+  clearPick();
   renderPanel();
   setSession(body.session_id);
   $("input").focus();
@@ -432,9 +440,21 @@ function setBusy(on) {
 
 async function send(message) {
   message = message.trim();
+  if (!message && pickedTool) message = pickedTool.example;  // empty send with a picked check: ask its example
   if (!message && leaseAttached && !leaseReviewed) message = "Review my lease";  // "press send to review"
   if (!message || busy) return;
-  if (leaseAttached) { leaseReviewed = true; input.placeholder = DEFAULT_PLACEHOLDER; }
+  if (leaseAttached) leaseReviewed = true;
+  const picked = pickedTool;
+  clearPick();  // the chip is for one message
+  if (picked) {
+    // A soft steer: the server adds "the user picked this check" to this message for the model.
+    // /chat itself is unchanged, and the agent still decides which tools to call.
+    try {
+      const r = await fetch("/pick-tool", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ tool: picked.name, session_id: sessionId }) });
+      if (r.ok) setSession((await r.json()).session_id);
+    } catch { /* the question still goes through without the hint */ }
+  }
   $("start").hidden = true;
   $("first-load").hidden = true;
   addUser(message);
@@ -475,17 +495,25 @@ $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(input
 $("attach").onclick = () => $("file").click();
 // Lease chip: attaching never sends anything; your draft stays as it is.
 const DEFAULT_PLACEHOLDER = input.placeholder;
+// The grey hint in the input: a picked check's example question, else the lease hint, else the default.
+function updatePlaceholder() {
+  input.placeholder = pickedTool ? pickedTool.example
+    : leaseAttached && !leaseReviewed ? "Lease attached. Ask me anything about it, or press send to review."
+    : DEFAULT_PLACEHOLDER;
+  input.rows = input.placeholder.length > 60 ? 2 : 1;  // room for a long example question to show in full
+  autosize();
+}
 let leaseAttached = false, leaseReviewed = false;
 function showLease(name, error) {
   const chip = $("attach-chip");
   leaseAttached = Boolean(name) && !error;
   chip.classList.toggle("error", Boolean(error));
-  if (!name && !error) { chip.style.display = "none"; chip.innerHTML = ""; input.placeholder = DEFAULT_PLACEHOLDER; return; }
+  if (!name && !error) { chip.style.display = "none"; chip.innerHTML = ""; updatePlaceholder(); return; }
   chip.style.display = "flex";
   chip.innerHTML = error ? `<span>⚠ ${esc(error)}</span><button type="button" class="chip-x" aria-label="Dismiss">×</button>`
     : `<span>📎 Lease attached: ${esc(name)}</span><button type="button" class="chip-x" title="Remove the lease" aria-label="Remove the lease">×</button>`;
   chip.querySelector(".chip-x").onclick = error ? () => showLease(null) : removeLease;
-  if (leaseAttached && !input.value.trim()) input.placeholder = "Lease attached. Ask me anything about it, or press send to review.";
+  updatePlaceholder();
 }
 async function removeLease() {
   await fetch("/lease/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) }).catch(() => {});
@@ -814,12 +842,26 @@ $("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => { con
 // ---------- What I can check: panel and / menu ----------
 // Both only draft a question into the input. Nothing here calls a tool: the agent decides.
 let catalog = [];
-function draft(text) {
-  input.value = text;
+// Picking a check (from the / menu or the table) shows a removable chip and puts its example question in
+// the placeholder. The input stays yours: type your own question, or send it empty to ask the example.
+let pickedTool = null;
+function pick(tool) {
+  pickedTool = tool;
+  input.value = "";  // drop the "/sun" typed to find it
   autosize();
   closeSlash();
+  const chip = $("tool-chip");
+  chip.hidden = false;
+  chip.innerHTML = `<span>/${esc(tool.name)}</span><button type="button" class="chip-x" title="Remove this check" aria-label="Remove this check">×</button>`;
+  chip.querySelector(".chip-x").onclick = () => { clearPick(); input.focus(); };
+  updatePlaceholder();
   input.focus();
-  input.setSelectionRange(text.length, text.length);
+}
+function clearPick() {
+  pickedTool = null;
+  $("tool-chip").hidden = true;
+  $("tool-chip").innerHTML = "";
+  updatePlaceholder();
 }
 async function loadCatalog() {
   try { catalog = await (await fetch("/tools")).json(); } catch { catalog = []; }
@@ -827,9 +869,9 @@ async function loadCatalog() {
       <td><b>${t.original ? "⭐ " : ""}${esc(t.label)}</b><span class="fn">${esc(t.name)}()</span></td>
       <td>${esc(t.answers)}</td><td class="data">${esc(t.data)}</td></tr>`).join("");
   $("cap-rows").querySelectorAll("tr").forEach((row) => {
-    const pick = () => draft(catalog[row.dataset.i].example);
-    row.onclick = pick;
-    row.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); pick(); } };
+    const choose = () => pick(catalog[row.dataset.i]);
+    row.onclick = choose;
+    row.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); choose(); } };
   });
 }
 loadCatalog();
@@ -847,13 +889,13 @@ function renderSlash() {
     ...catalog.filter((t) => !named(t) && t.answers.toLowerCase().includes(q))];
   slashIndex = Math.min(slashIndex, Math.max(0, slashItems.length - 1));
   $("slash").hidden = false;
-  $("slash").innerHTML = `<div class="head">Pick a check to draft its question · the assistant decides which tools to run</div>` +
+  $("slash").innerHTML = `<div class="head">Pick a check, then ask your question · the assistant still decides which tools to run</div>` +
     (slashItems.length ? slashItems.map((t, i) => `<button type="button" role="option" class="${i === slashIndex ? "on" : ""}" data-i="${i}">
         <b>${t.original ? "⭐ " : ""}${esc(t.label)}</b> <span class="fn">${esc(t.name)}() · ${esc(t.answers)}</span></button>`).join("")
       : `<div class="none">No check matches “${esc(q)}”.</div>`);
   $("slash").querySelectorAll("button").forEach((b) => {
     b.onmousedown = (e) => e.preventDefault();  // keep focus in the input
-    b.onclick = () => draft(slashItems[b.dataset.i].example);
+    b.onclick = () => pick(slashItems[b.dataset.i]);
   });
 }
 function slashKey(e) {
@@ -866,14 +908,15 @@ function slashKey(e) {
   }
   if (e.key === "Enter" || e.key === "Tab") {
     e.preventDefault();  // Enter picks an item; it never sends from the menu
-    if (slashItems[slashIndex]) draft(slashItems[slashIndex].example);
+    if (slashItems[slashIndex]) pick(slashItems[slashIndex]);
     return true;
   }
   if (e.key === "Escape") { e.preventDefault(); closeSlash(); return true; }
   return false;
 }
 input.addEventListener("input", () => { slashIndex = 0; renderSlash(); });
-input.addEventListener("blur", () => setTimeout(closeSlash, 150));
+// Close when focus really leaves (clicking the chip's × blurs the input for a moment, then refocuses it).
+input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input) closeSlash(); }, 150));
 
 // ---------- Resume ----------
 function restore(view) {
