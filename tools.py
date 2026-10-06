@@ -918,8 +918,11 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
         m = run("check_maintenance_record", check_maintenance_record)
         hazardous = m["open_by_class"]["B"]["count"] + m["open_by_class"]["C"]["count"]
         longest = m["days_open"]["longest"] or 0
+        classes = m["open_by_class"]
         evidence = (f"{m['open_violations']} open HPD violations in the building ({m['open_per_apartment']} per "
-                    f"apartment), {hazardous} hazardous (B/C)" + (f"; the oldest has been open {longest} days." if longest else "."))
+                    f"apartment): {classes['C']['count']} class C (immediately hazardous), {classes['B']['count']} "
+                    f"class B (hazardous), {classes['A']['count']} class A"
+                    + (f"; the oldest has been open {longest} days." if longest else "."))
         bad = m["open_by_class"]["C"]["count"] or longest > 365
         if claim == "unit_condition":
             # 'Pristine' or 'renovated' describes the unit; building records can only partly support it.
