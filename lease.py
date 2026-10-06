@@ -132,11 +132,15 @@ def looks_like_lease(text: str) -> bool:
 
 def clauses(text: str) -> list[str]:
     """Split a lease into sentence-sized pieces, so each flag can quote its own clause."""
-    flat = re.sub(r"[ \t]*\n[ \t]*(?!\n)", " ", text)  # join wrapped lines, keep paragraph breaks
-    parts = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"(?<=[.;])\s+(?=[A-Z0-9(])|\n{2,}", flat)]
+    pieces = []
+    for paragraph in re.split(r"\n\s*\n", text):  # blank lines separate paragraphs
+        flat = re.sub(r"\s+", " ", paragraph).strip()  # join wrapped lines
+        if not flat or SAMPLE_LABEL in flat and len(flat) <= len(SAMPLE_LABEL) + 4:
+            continue  # the sample's "[FICTIONAL SAMPLE ...]" label lines aren't clauses
+        pieces += [p.strip() for p in re.split(r"(?<=[.;])\s+(?=[A-Z0-9(])", flat)]
     # "8. ATTORNEY'S FEES." is a heading, not a clause: attach it to what follows.
     merged = []
-    for p in parts:
+    for p in pieces:
         if len(p) <= 3:
             continue
         if merged and len(merged[-1]) <= 45 and re.fullmatch(r"[\d.\s]*[A-Z][A-Z' &/-]+\.?", merged[-1]):

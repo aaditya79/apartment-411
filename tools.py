@@ -135,6 +135,8 @@ def look_up_building(address: str, state: dict) -> dict:
         "building_type": b.bldgclass_label,
         "owner_of_record": b.owner_name or None,
         "hpd_registered": b.is_registered,
+        "lat": round(b.lat, 6),
+        "lon": round(b.lon, 6),
     }
     if b.is_registered:
         result["registration"] = {"status": b.registration_status, "period_ends": b.registration_ends}
@@ -458,6 +460,7 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
     rank = next((i + 1 for i, t in enumerate(rankable) if t["this_building"]), None)
 
     return {
+        "address": b.label,
         "owner": {"name": nyc.contact_name(person), "registered_role": person.get("type"),
                   "on_this_building_as": "registered " + person.get("type", "contact")},
         "buildings": len(table),

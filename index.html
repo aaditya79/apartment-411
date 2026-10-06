@@ -1,194 +1,753 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Gemini Web Tool Calling</title>
-        <style>
-            * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }
-            body {
-                font-family: system-ui, sans-serif;
-                height: 100vh;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 3rem 1rem;
-            }
-            #container {
-                width: 100%;
-                max-width: 900px;
-                display: flex;
-                flex-direction: column;
-                border: 1px solid #e0e0e0;
-            }
-            #messages {
-                overflow-y: auto;
-                padding: 2rem;
-                display: flex;
-                flex-direction: column;
-                gap: 1.5rem;
-                min-height: 450px;
-                max-height: 70vh;
-            }
-            .msg {
-                line-height: 1.5;
-                max-width: 80%;
-            }
-            .msg.user {
-                align-self: flex-end;
-                text-align: right;
-            }
-            .msg .role {
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: #999;
-                margin-bottom: 0.25rem;
-            }
-            .msg.loading .content {
-                color: #999;
-            }
-            #input-area {
-                display: flex;
-                gap: 1rem;
-                padding: 1.5rem;
-                border-top: 1px solid #e0e0e0;
-            }
-            #user-input {
-                flex: 1;
-                padding: 0.75rem 0;
-                border: none;
-                border-bottom: 1px solid #e0e0e0;
-                font-size: 1rem;
-                outline: none;
-            }
-            #user-input:focus {
-                border-bottom-color: #000;
-            }
-            button {
-                padding: 0.75rem 1.5rem;
-                background: #000;
-                color: #fff;
-                border: none;
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                cursor: pointer;
-            }
-            .tool {
-                font-family: ui-monospace, monospace;
-                font-size: 0.75rem;
-                color: #555;
-                background: #f5f5f5;
-                border-left: 3px solid #f59e0b;
-                padding: 0.5rem 0.75rem;
-                margin: 0.25rem 0 0.75rem;
-                white-space: pre-wrap;
-                word-break: break-word;
-            }
-            .tool .label {
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: #b45309;
-            }
-            button:disabled {
-                opacity: 0.3;
-            }
-        </style>
-    </head>
-    <body>
-        <div id="container">
-            <div id="messages"></div>
-            <div id="input-area">
-                <input
-                    type="text"
-                    id="user-input"
-                    placeholder="Type a message..."
-                    autocomplete="off"
-                />
-                <button id="send-btn">Send</button>
-            </div>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Apartment 411</title>
+<meta name="description" content="Get the 411 on any NYC apartment before you sign: repairs, complaints, pests, the landlord's other buildings, sunlight, the walk home and your lease, from city records." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2317140f'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='14' font-weight='700' fill='%23ffd23f' text-anchor='middle'%3E411%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+:root {
+  --paper: #f5f1e8;
+  --paper-2: #ece6d8;
+  --card: #fffdf8;
+  --ink: #17140f;
+  --ink-2: #4a443a;
+  --muted: #6e675b;
+  --rule: #d6cebd;
+  --accent: #ffd23f;        /* highlighter yellow: the one strong accent */
+  --bad: #a8241a;
+  --warn: #9a5b00;
+  --good: #1f6b3a;
+  --info: #2f4a6b;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+button { font: inherit; color: inherit; cursor: pointer; }
+a { color: var(--info); }
+.mono { font-family: var(--mono); }
+.hl { background: linear-gradient(transparent 55%, var(--accent) 55%); padding: 0 .1em; }
+
+/* ---- Masthead ---- */
+.masthead { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 2px solid var(--ink); background: var(--paper); position: sticky; top: 0; z-index: 1000; }
+.logo { display: flex; align-items: baseline; gap: 6px; font-family: var(--cond); font-weight: 700; font-size: 22px; letter-spacing: .01em; text-transform: uppercase; white-space: nowrap; background: none; border: 0; }
+.logo .num { background: var(--ink); color: var(--accent); padding: 0 6px; font-family: var(--mono); font-weight: 600; }
+.masthead .tag { color: var(--ink-2); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session { display: flex; align-items: center; gap: 6px; font: 12px var(--mono); color: var(--muted); }
+.session button, .btn-ghost { border: 1px solid var(--rule); background: var(--card); padding: 3px 8px; font-size: 12px; border-radius: 3px; }
+.session button:hover, .btn-ghost:hover { border-color: var(--ink); }
+.btn-primary { background: var(--ink); color: var(--paper); border: 0; padding: 7px 12px; border-radius: 3px; font-weight: 600; font-size: 13px; }
+
+/* ---- Layout ---- */
+.layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); height: calc(100vh - 54px); }
+.chat-col { display: flex; flex-direction: column; min-height: 0; border-right: 2px solid var(--ink); }
+.scroll { flex: 1; overflow-y: auto; padding: 20px 22px 10px; }
+.panel { overflow-y: auto; background: var(--paper-2); padding: 16px 18px 40px; }
+
+/* ---- Start screen ---- */
+.start h1 { font-family: var(--cond); font-size: 44px; line-height: 1; text-transform: uppercase; letter-spacing: -.01em; margin: 6px 0 8px; }
+.start h1 .num { background: var(--ink); color: var(--accent); font-family: var(--mono); padding: 0 8px; }
+.start .lede { font-size: 18px; max-width: 34em; margin-bottom: 14px; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 14px; margin: 10px 0 18px; padding: 12px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 13.5px; }
+.checks div::before { content: "▸ "; color: var(--ink-2); }
+.examples-title { font: 600 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 8px; }
+.examples { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.example { text-align: left; background: var(--card); border: 1px solid var(--rule); border-left: 4px solid var(--ink); padding: 9px 11px; border-radius: 2px; font-size: 13.5px; line-height: 1.35; }
+.example:hover, .example:focus-visible { border-color: var(--ink); background: #fff; outline: none; box-shadow: 3px 3px 0 var(--ink); }
+.example .k { display: block; font: 600 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.example.lease { border-left-color: var(--accent); }
+.story { margin-top: 18px; font-size: 13.5px; color: var(--ink-2); max-width: 40em; }
+.fineprint { margin-top: 12px; font-size: 12px; color: var(--muted); max-width: 46em; }
+
+/* ---- Messages ---- */
+#messages { display: flex; flex-direction: column; gap: 14px; }
+.msg.user { align-self: flex-end; max-width: 85%; background: var(--ink); color: var(--paper); padding: 8px 12px; border-radius: 10px 10px 2px 10px; white-space: pre-wrap; word-break: break-word; }
+.msg.user.long { max-height: 9em; overflow: hidden; position: relative; }
+.msg.bot { max-width: 100%; }
+.msg.bot .answer { background: var(--card); border: 1px solid var(--rule); padding: 12px 14px; border-radius: 2px; word-break: break-word; }
+.answer h1, .answer h2, .answer h3 { font-family: var(--cond); font-size: 16px; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .02em; }
+.answer p { margin: 6px 0; } .answer ul, .answer ol { margin: 6px 0 6px 20px; } .answer li { margin: 2px 0; }
+.answer hr { border: 0; border-top: 1px dashed var(--rule); margin: 10px 0; }
+.answer code { font-family: var(--mono); font-size: 13px; background: var(--paper-2); padding: 0 3px; }
+.answer blockquote { border-left: 3px solid var(--accent); padding-left: 10px; color: var(--ink-2); }
+.answer table { border-collapse: collapse; font-size: 13px; margin: 6px 0; display: block; overflow-x: auto; }
+.answer td, .answer th { border: 1px solid var(--rule); padding: 3px 6px; }
+.loading { font: 13px var(--mono); color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
+.loading .dot { width: 9px; height: 9px; background: var(--accent); border: 1px solid var(--ink); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .2; } }
+.error-msg { color: var(--bad); font-size: 13px; }
+
+/* ---- Tool-call cards ---- */
+.calls { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.calls-head { font: 600 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+details.call { border: 1px solid var(--rule); background: var(--paper); border-radius: 2px; }
+details.call > summary { list-style: none; cursor: pointer; padding: 5px 9px; display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+details.call > summary::-webkit-details-marker { display: none; }
+details.call > summary::before { content: "+"; font-family: var(--mono); color: var(--muted); width: 10px; }
+details.call[open] > summary::before { content: "−"; }
+.call .name { font-weight: 600; }
+.call .fn { font: 11.5px var(--mono); color: var(--muted); }
+.call .gist { margin-left: auto; font: 12px var(--mono); color: var(--ink-2); text-align: right; }
+.call.err .gist { color: var(--bad); }
+.call .body { padding: 6px 10px 10px; border-top: 1px dashed var(--rule); font-size: 12px; }
+.call .body h5 { font: 600 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 2px; }
+.call pre { font: 11.5px/1.45 var(--mono); background: var(--card); border: 1px solid var(--rule); padding: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* ---- Composer ---- */
+.composer { border-top: 2px solid var(--ink); padding: 10px 14px 12px; background: var(--paper); }
+.attach-chip { display: none; margin-bottom: 6px; font: 12px var(--mono); background: var(--accent); border: 1px solid var(--ink); padding: 2px 8px; border-radius: 2px; width: fit-content; }
+.composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; min-height: 42px; max-height: 160px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 2px; font: 15px/1.4 var(--sans); background: var(--card); }
+.composer textarea:focus { outline: 3px solid var(--accent); outline-offset: 0; }
+.icon-btn { width: 42px; height: 42px; border: 1px solid var(--ink); background: var(--card); border-radius: 2px; font-size: 18px; flex: none; }
+.send-btn { height: 42px; padding: 0 16px; background: var(--ink); color: var(--paper); border: 0; border-radius: 2px; font-weight: 600; flex: none; }
+.send-btn:disabled, .icon-btn:disabled { opacity: .45; cursor: wait; }
+.composer .hint { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+
+/* ---- Panel: building file ---- */
+.panel-empty { color: var(--ink-2); padding: 30px 6px; }
+.panel-empty .stamp { display: inline-block; font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; border: 2px solid var(--ink-2); padding: 2px 8px; transform: rotate(-2deg); margin-bottom: 12px; }
+.panel-empty ul { margin: 8px 0 0 18px; font-size: 13.5px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tabs button { border: 1px solid var(--ink); background: var(--card); padding: 3px 9px; font-size: 12.5px; border-radius: 2px; }
+.tabs button.on { background: var(--ink); color: var(--paper); }
+.file-head { border: 2px solid var(--ink); background: var(--card); padding: 10px 12px; margin-bottom: 10px; }
+.file-head .label { font: 600 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.file-head h2 { font-family: var(--cond); font-size: 24px; line-height: 1.1; text-transform: uppercase; }
+.file-head .facts { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12.5px var(--mono); color: var(--ink-2); margin-top: 4px; }
+#map { height: 300px; border: 2px solid var(--ink); margin-bottom: 4px; background: #ddd; }
+.map-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 11.5px var(--mono); color: var(--ink-2); margin-bottom: 12px; }
+.map-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid #0006; margin-right: 4px; vertical-align: -1px; }
+.leaflet-container { font: 12px var(--sans); }
+.leaflet-tile-pane { filter: grayscale(.85) contrast(1.05); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.card { background: var(--card); border: 1px solid var(--ink); border-radius: 2px; padding: 10px 12px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card .k { font: 600 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.card .big { font: 600 28px/1.1 var(--mono); margin: 4px 0 2px; }
+.card .big small { font-size: 13px; font-weight: 400; color: var(--ink-2); }
+.card .vs { font-size: 13px; color: var(--ink-2); }
+.card .note { font-size: 11.5px; color: var(--muted); margin-top: 6px; border-top: 1px dashed var(--rule); padding-top: 5px; }
+.card ul.list { list-style: none; margin-top: 6px; font-size: 12.5px; }
+.card ul.list li { padding: 3px 0; border-top: 1px dotted var(--rule); display: flex; gap: 8px; justify-content: space-between; }
+.card ul.list li span:last-child { font-family: var(--mono); white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { font: 11.5px var(--mono); border: 1px solid var(--rule); padding: 1px 6px; border-radius: 2px; background: var(--paper); }
+.chip.bad { border-color: var(--bad); color: var(--bad); } .chip.warn { border-color: var(--warn); color: var(--warn); } .chip.good { border-color: var(--good); color: var(--good); }
+.verdict { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .05em; padding: 1px 5px; border-radius: 2px; white-space: nowrap; }
+.v-supported { background: #dcefe1; color: var(--good); } .v-partly { background: #eef0d6; color: #56610d; }
+.v-not { background: #f6dcd8; color: var(--bad); } .v-cant { background: #ece6d8; color: var(--ink-2); }
+.sev-not { border-left: 4px solid var(--bad); } .sev-inc { border-left: 4px solid var(--warn); } .sev-check { border-left: 4px solid var(--info); }
+.flag { padding: 6px 8px; margin-top: 6px; background: var(--paper); font-size: 12.5px; }
+.flag .sev { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+.flag q { display: block; font: 11.5px var(--mono); color: var(--ink-2); margin: 3px 0; quotes: "“" "”"; }
+.letter { font: 12px/1.5 var(--mono); white-space: pre-wrap; background: var(--paper); border: 1px solid var(--rule); padding: 8px; max-height: 260px; overflow: auto; margin-top: 6px; }
+svg text { font-family: var(--mono); }
+
+/* ---- Mobile: stacked, no sideways scrolling ---- */
+@media (max-width: 860px) {
+  .layout { display: block; height: auto; }
+  .chat-col { border-right: 0; min-height: calc(100vh - 54px); }
+  .scroll { padding: 14px 14px 8px; }
+  .panel { border-top: 2px solid var(--ink); padding: 14px 14px 40px; }
+  .masthead { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+  .masthead .tag { display: none; }
+  .start h1 { font-size: 34px; }
+  .start .lede { font-size: 16px; }
+  .composer { position: sticky; bottom: 0; }
+  #map { height: 240px; }
+  .call .fn { display: none; }
+  details.call > summary { flex-wrap: wrap; }
+  .call .gist { margin-left: 0; width: 100%; text-align: left; padding-left: 18px; }
+  .jump { display: inline !important; }
+}
+.jump { display: none; margin-left: 6px; background: none; border: 0; text-decoration: underline; font: inherit; color: var(--info); text-transform: none; letter-spacing: 0; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <button class="logo" id="home" title="New search">Apartment <span class="num">411</span></button>
+  <div class="tag">City records on any NYC rental, before you sign.</div>
+  <div class="session" id="session" hidden>
+    <span id="session-label">Session —</span>
+    <button id="copy-session" title="Copy the full session ID">Copy</button>
+    <button id="new-search">New search</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="chat-col" aria-label="Chat">
+    <div class="scroll" id="scroll">
+      <div class="start" id="start">
+        <div class="examples-title">NYC renter's check · built on public city data</div>
+        <h1>Apartment <span class="num">411</span></h1>
+        <p class="lede">Get the 411 on any NYC apartment <span class="hl">before you sign</span>. Give it an address, a listing or your lease, and it tells you what the listing won't.</p>
+        <div class="checks">
+          <div>Open violations &amp; repair speed</div>
+          <div>Tenant complaints (heat, leaks…)</div>
+          <div>Rats &amp; bedbugs</div>
+          <div>Evictions &amp; housing court</div>
+          <div>The landlord's other buildings</div>
+          <div>How it compares to its block</div>
+          <div>Direct sun on your window, by floor</div>
+          <div>The walk home from the subway at night</div>
+          <div>Listing claims vs. records</div>
+          <div>Your lease vs. NY rules</div>
+          <div>A repair letter that cites violations</div>
         </div>
-        <script>
-            const messages = document.getElementById("messages");
-            const userInput = document.getElementById("user-input");
-            const sendBtn = document.getElementById("send-btn");
-            let sessionId = null;
+        <div class="examples-title">Try one</div>
+        <div class="examples" id="examples"></div>
+        <p class="story">Why this exists: I ran it on my own building, 184 Claremont Ave. It found smoke and carbon-monoxide detector violations open since March 2020, failed rat inspections, and a landlord with 15 other buildings, some far worse. It also told me my street-side windows only get afternoon sun. The "morning sun" I thought I had was light reflected off the buildings across the street.</p>
+        <p class="fineprint">Data: NYC Open Data (HPD, Health Dept., NYPD, DOB footprints), the city's GeoSearch geocoder, MTA stations and OpenStreetMap. Full records exist for HPD-registered rentals with 3+ apartments. Records can lag and "open" doesn't always mean unfixed. Not legal advice.</p>
+      </div>
+      <div id="messages" aria-live="polite"></div>
+    </div>
 
-            function addMessage(role, text, isLoading = false) {
-                const div = document.createElement("div");
-                div.className =
-                    "msg " +
-                    (role === "you" ? "user" : "assistant") +
-                    (isLoading ? " loading" : "");
-                div.innerHTML =
-                    '<div class="role">' +
-                    role +
-                    '</div><div class="content">' +
-                    text +
-                    "</div>";
-                messages.appendChild(div);
-                messages.scrollTop = messages.scrollHeight;
-                return div;
-            }
+    <form class="composer" id="composer">
+      <div class="attach-chip" id="attach-chip"></div>
+      <div class="composer-row">
+        <button type="button" class="icon-btn" id="attach" title="Attach a lease (PDF or .txt, up to 5 MB)" aria-label="Attach a lease">📎</button>
+        <input type="file" id="file" accept=".pdf,.txt,application/pdf,text/plain" hidden />
+        <textarea id="input" rows="1" placeholder="An NYC address, a listing to fact-check, or a question…" aria-label="Message"></textarea>
+        <button type="submit" class="send-btn" id="send">Ask</button>
+      </div>
+      <div class="hint">Enter to send · Shift+Enter for a new line · 📎 attach a lease (PDF or .txt)</div>
+    </form>
+  </section>
 
-            async function send() {
-                const text = userInput.value.trim();
-                if (!text) return;
+  <aside class="panel" id="panel" aria-label="Building file">
+    <div class="panel-empty" id="panel-empty">
+      <div class="stamp">Building file</div>
+      <p>Ask about an address and its file builds up here: a map, and one scorecard per check, each with the number, what it's compared with, and the caveat.</p>
+      <ul>
+        <li>Every number comes from a tool call you can open in the chat.</li>
+        <li>No made-up overall score: you weigh the evidence.</li>
+      </ul>
+    </div>
+    <div id="panel-body" hidden>
+      <div class="tabs" id="tabs"></div>
+      <div class="file-head" id="file-head"></div>
+      <div id="map"></div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="cards" id="cards"></div>
+    </div>
+  </aside>
+</main>
 
-                userInput.value = "";
-                sendBtn.disabled = true;
-                addMessage("you", text);
-                const loading = addMessage("assistant", "Thinking...", true);
+<script>
+// ---------- Content ----------
+const EXAMPLES = [
+  { k: "Should I rent here?", text: "I'm thinking of renting at 184 Claremont Ave in Manhattan. Should I worry about anything?" },
+  { k: "The landlord", text: "Who owns 184 Claremont Ave in Manhattan, and how do they treat tenants in their other buildings?" },
+  { k: "Fact-check a listing", text: "The listing says 'sun-drenched 4th floor in a well-maintained building' for 184 Claremont Ave. Is that true?" },
+  { k: "Review a lease", text: "Try a sample lease", lease: true },
+  { k: "Get a repair made", text: "I live at 184 Claremont Ave, Manhattan. My bathroom ceiling has been leaking for months. Write a letter to my landlord." },
+  { k: "The walk home", text: "How safe is the walk home from the subway at night to 184 Claremont Ave, Manhattan?" },
+];
+const TOOL_LABELS = {
+  look_up_building: "Building lookup", check_maintenance_record: "Maintenance record", get_tenant_complaints: "Tenant complaints",
+  check_pests: "Rats & bedbugs", check_evictions_and_court: "Evictions & court", get_landlord_portfolio: "Landlord's buildings",
+  get_neighborhood_context: "Vs. the neighborhood", draft_repair_request: "Repair letter", estimate_sunlight: "Sunlight model",
+  fact_check_listing: "Listing fact-check", review_lease: "Lease review", night_walk_check: "Night walk",
+};
+const LOADING = [
+  [/lease/i, ["Reading the lease…", "Checking NY rules…", "Comparing with city records…"]],
+  [/sun|light|bright|floor/i, ["Tracing the sun…", "Casting shadows from every building nearby…", "Checking city records…"]],
+  [/walk|night|safe|subway/i, ["Mapping the walk…", "Counting reported incidents…", "Comparing with other walks…"]],
+  [/letter|leak|repair|broken/i, ["Finding open violations…", "Drafting the letter…"]],
+  [/own|landlord/i, ["Finding the owner…", "Pulling their other buildings…", "Checking city records…"]],
+  [/./, ["Checking city records…", "Pulling HPD violations and complaints…", "Comparing with the block…"]],
+];
 
-                try {
-                    const res = await fetch("/chat", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            message: text,
-                            session_id: sessionId,
-                        }),
-                    });
-                    const data = await res.json();
-                    sessionId = data.session_id;
+// ---------- State ----------
+let sessionId = null;
+const files = {};          // address -> {tool name -> parsed result}
+let fileOrder = [];        // addresses, most recent last
+let shownAddress = null;
+let leaseResult = null, letterResult = null;
+let busy = false;
 
-                    // Show each tool the harness ran, above the assistant's answer
-                    for (const call of data.tool_calls || []) {
-                        const div = document.createElement("div");
-                        div.className = "tool";
-                        const label = document.createElement("span");
-                        label.className = "label";
-                        label.textContent = "tool call  ";
-                        div.appendChild(label);
-                        div.appendChild(
-                            document.createTextNode(
-                                call.name + "(" + JSON.stringify(call.args) + ")\n→ " + call.result,
-                            ),
-                        );
-                        messages.insertBefore(div, loading);
-                    }
-                    loading.querySelector(".content").textContent =
-                        data.response;
-                    loading.classList.remove("loading");
-                } catch (e) {
-                    loading.querySelector(".content").textContent =
-                        "Error: " + e.message;
-                    loading.classList.remove("loading");
-                }
-                sendBtn.disabled = false;
-                userInput.focus();
-            }
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const md = (s) => DOMPurify.sanitize(marked.parse(s || ""), { ADD_ATTR: ["target"] });
+const parse = (s) => { try { return JSON.parse(s); } catch { return { error: "Unreadable tool result" }; } };
+const fmt = (n, d = 2) => (n == null ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d }));
 
-            sendBtn.addEventListener("click", send);
-            userInput.addEventListener("keydown", function (e) {
-                if (e.key === "Enter") send();
-            });
-            userInput.focus();
-        </script>
-    </body>
+// ---------- Session ----------
+function setSession(id) {
+  if (!id) return;
+  sessionId = id;
+  $("session").hidden = false;
+  $("session-label").textContent = "Session " + id.slice(0, 8) + "…";
+  $("session-label").title = id;
+}
+$("copy-session").onclick = async () => {
+  try { await navigator.clipboard.writeText(sessionId); $("copy-session").textContent = "Copied"; } catch { $("copy-session").textContent = "Copy failed"; }
+  setTimeout(() => ($("copy-session").textContent = "Copy"), 1500);
+};
+async function newSearch() {
+  if (busy) return;
+  const r = await fetch("/clear" + (sessionId ? "?session_id=" + encodeURIComponent(sessionId) : ""), { method: "POST" });
+  const body = await r.json().catch(() => ({}));
+  $("messages").innerHTML = "";
+  $("start").hidden = false;
+  for (const k of Object.keys(files)) delete files[k];
+  fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
+  renderPanel();
+  setSession(body.session_id);
+  $("input").focus();
+}
+$("new-search").onclick = newSearch;
+$("home").onclick = newSearch;
+
+// ---------- Chat ----------
+function addUser(text) {
+  const div = document.createElement("div");
+  div.className = "msg user" + (text.length > 600 ? " long" : "");
+  div.textContent = text.length > 600 ? text.slice(0, 600) + "…" : text;
+  $("messages").appendChild(div);
+  scrollDown();
+}
+function addBot(answer, toolCalls) {
+  const div = document.createElement("div");
+  div.className = "msg bot";
+  if (toolCalls && toolCalls.length) div.appendChild(toolCards(toolCalls));
+  const a = document.createElement("div");
+  a.className = "answer";
+  a.innerHTML = md(answer);
+  a.querySelectorAll("a").forEach((l) => { l.target = "_blank"; l.rel = "noopener"; });
+  div.appendChild(a);
+  $("messages").appendChild(div);
+  scrollDown();
+}
+function scrollDown() { const s = $("scroll"); s.scrollTop = s.scrollHeight; }
+
+function gist(name, r) {
+  if (r.error) return "error: " + r.error;
+  switch (name) {
+    case "look_up_building": return `${r.apartments ?? "?"} apts · built ${r.year_built ?? "?"}`;
+    case "check_maintenance_record": return `${r.open_violations} open · ${fmt(r.open_per_apartment)}/apt`;
+    case "get_tenant_complaints": return r.complaints != null ? `${r.complaints} since 2023` : (r.source || "");
+    case "check_pests": return `rats failed ${r.rodent_inspections_since_2023?.failed_for_rats}/${r.rodent_inspections_since_2023?.inspections}`;
+    case "check_evictions_and_court": return `${r.residential_evictions_since_2023?.count} evictions · ${r.hpd_court_cases?.since_2023} cases`;
+    case "get_landlord_portfolio": return `${r.buildings} bldgs · ${fmt(r.portfolio_per_apartment)}/apt`;
+    case "get_neighborhood_context": return `${fmt(r.open_violations_per_apartment?.this_building)} vs ${fmt(r.open_violations_per_apartment?.area_median)} /apt`;
+    case "estimate_sunlight": return r.sides ? `floor ${r.floor} · ${r.sides.length} sides` : "floor sweep";
+    case "fact_check_listing": return `${(r.claims || []).length} claims`;
+    case "review_lease": return `${(r.flags || []).length} flags`;
+    case "night_walk_check": return `${r.incidents_on_route} incidents · ${r.walk?.minutes} min`;
+    case "draft_repair_request": return `${(r.cited_violations || []).length} violations cited`;
+  }
+  return "";
+}
+function toolCards(calls) {
+  const wrap = document.createElement("div");
+  wrap.className = "calls";
+  wrap.innerHTML = `<div class="calls-head">${calls.length} tool call${calls.length > 1 ? "s" : ""} · click to see arguments and result<button class="jump" type="button">building file ↓</button></div>`;
+  wrap.querySelector(".jump").onclick = () => $("panel").scrollIntoView({ behavior: "smooth" });
+  for (const c of calls) {
+    const r = parse(c.result);
+    const d = document.createElement("details");
+    d.className = "call" + (r.error ? " err" : "");
+    d.innerHTML = `<summary><span class="name">${esc(TOOL_LABELS[c.name] || c.name)}</span><span class="fn">${esc(c.name)}()</span><span class="gist">${esc(gist(c.name, r))}</span></summary>
+      <div class="body"><h5>Arguments</h5><pre>${esc(JSON.stringify(c.args, null, 2))}</pre><h5>Result</h5><pre>${esc(JSON.stringify(r, null, 2))}</pre></div>`;
+    wrap.appendChild(d);
+  }
+  return wrap;
+}
+
+function showLoading(message) {
+  const lines = (LOADING.find(([re]) => re.test(message)) || LOADING[LOADING.length - 1])[1];
+  const div = document.createElement("div");
+  div.className = "msg bot";
+  div.innerHTML = `<div class="loading"><span class="dot"></span><span>${lines[0]}</span></div>`;
+  $("messages").appendChild(div);
+  scrollDown();
+  let i = 0;
+  const timer = setInterval(() => { i = (i + 1) % lines.length; div.querySelector(".loading span:last-child").textContent = lines[i]; }, 2600);
+  return () => { clearInterval(timer); div.remove(); };
+}
+function setBusy(on) {
+  busy = on;
+  $("send").disabled = on; $("attach").disabled = on;
+  document.querySelectorAll(".example").forEach((b) => (b.disabled = on));
+}
+
+async function send(message) {
+  message = message.trim();
+  if (!message || busy) return;
+  $("start").hidden = true;
+  addUser(message);
+  $("input").value = ""; autosize();
+  setBusy(true);
+  const stop = showLoading(message);
+  try {
+    const r = await fetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }) });
+    if (!r.ok) throw new Error("The server returned " + r.status);
+    const body = await r.json();
+    stop();
+    setSession(body.session_id);
+    addBot(body.response, body.tool_calls);
+    absorb(body.tool_calls);
+  } catch (e) {
+    stop();
+    const div = document.createElement("div");
+    div.className = "msg bot";
+    div.innerHTML = `<div class="answer error-msg">Couldn't reach Apartment 411 (${esc(e.message)}). Check your connection and try again.</div>`;
+    $("messages").appendChild(div);
+  } finally {
+    setBusy(false);
+    $("input").focus();
+  }
+}
+
+// ---------- Composer ----------
+const input = $("input");
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; }
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input.value); } });
+$("composer").addEventListener("submit", (e) => { e.preventDefault(); send(input.value); });
+
+// ---------- Leases ----------
+$("attach").onclick = () => $("file").click();
+$("file").onchange = async () => {
+  const f = $("file").files[0];
+  $("file").value = "";
+  if (!f) return;
+  const chip = $("attach-chip");
+  chip.style.display = "block";
+  chip.textContent = "Uploading " + f.name + "…";
+  const form = new FormData();
+  form.append("file", f);
+  if (sessionId) form.append("session_id", sessionId);
+  try {
+    const r = await fetch("/upload", { method: "POST", body: form });
+    const body = await r.json();
+    setSession(body.session_id);
+    if (!r.ok) { chip.textContent = "⚠ " + (body.error || "Upload failed"); return; }
+    chip.textContent = `📎 Lease attached: ${f.name} (${fmt(body.characters, 0)} characters)`;
+    send("Review my lease");
+  } catch (e) {
+    chip.textContent = "⚠ Upload failed: " + e.message;
+  }
+};
+async function trySampleLease() {
+  if (busy) return;
+  const r = await fetch("/sample-lease", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) });
+  const body = await r.json();
+  setSession(body.session_id);
+  const chip = $("attach-chip");
+  chip.style.display = "block";
+  chip.textContent = "📎 Lease attached: fictional sample lease (184 Claremont Ave, Apt 4B)";
+  send("Review my lease");
+}
+
+// ---------- Building file ----------
+function absorb(calls) {
+  for (const c of calls || []) {
+    const r = parse(c.result);
+    if (r.error) continue;
+    if (c.name === "review_lease") { leaseResult = r; }
+    if (c.name === "draft_repair_request") { letterResult = r; }
+    const addr = r.address || (c.name === "draft_repair_request" ? shownAddress : null);
+    if (!addr) continue;
+    files[addr] = files[addr] || {};
+    // The landlord's portfolio and the sweep are separate from a single-floor sun run.
+    const key = c.name === "estimate_sunlight" && !r.sides ? "sun_sweep" : c.name;
+    files[addr][key] = r;
+    fileOrder = fileOrder.filter((a) => a !== addr).concat(addr);
+    shownAddress = addr;
+  }
+  renderPanel();
+}
+
+function renderPanel() {
+  const has = fileOrder.length > 0 || leaseResult;
+  $("panel-empty").hidden = has;
+  $("panel-body").hidden = !has;
+  if (!has) return;
+  $("tabs").innerHTML = fileOrder.length > 1 ? fileOrder.map((a) => `<button class="${a === shownAddress ? "on" : ""}" data-a="${esc(a)}">${esc(a)}</button>`).join("") : "";
+  $("tabs").querySelectorAll("button").forEach((b) => (b.onclick = () => { shownAddress = b.dataset.a; renderPanel(); }));
+  const f = files[shownAddress] || {};
+  renderHead(f);
+  renderMap(f);
+  const cards = [cardMaintenance, cardComplaints, cardPests, cardCourt, cardLandlord, cardArea, cardSun, cardSweep, cardWalk, cardListing]
+    .map((fn) => fn(f)).filter(Boolean);
+  if (leaseResult && (!leaseResult.address || leaseResult.address === shownAddress)) cards.push(cardLease(leaseResult));
+  if (letterResult && files[shownAddress]?.draft_repair_request) cards.push(cardLetter(letterResult));
+  $("cards").innerHTML = cards.join("");
+  $("cards").querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => {
+    await navigator.clipboard.writeText(letterResult.letter_text); b.textContent = "Copied";
+  }));
+}
+
+function renderHead(f) {
+  const b = f.look_up_building;
+  const addr = shownAddress || (leaseResult && leaseResult.address) || "Your lease";
+  if (!b) { $("file-head").innerHTML = `<div class="label">Building file</div><h2>${esc(addr)}</h2>`; return; }
+  const reg = b.hpd_registered ? `HPD registration: ${esc(b.registration?.status)}` : "Not HPD-registered";
+  const owner = b.registered_contacts?.owner_company?.[0]?.name || b.registered_contacts?.owner_person?.[0]?.name || b.owner_of_record;
+  const agent = b.registered_contacts?.managing_agent?.[0]?.name;
+  $("file-head").innerHTML = `<div class="label">Building file · ${esc(b.neighborhood || "")}${b.borough ? ", " + esc(b.borough) : ""}</div>
+    <h2>${esc(b.address)}</h2>
+    <div class="facts"><span>${fmt(b.apartments, 0)} apts</span><span>built ${b.year_built ?? "?"}</span><span>${b.floors ?? "?"} floors</span><span>${esc(b.building_type)}</span><span>${reg}</span></div>
+    ${owner ? `<div class="facts"><span>Owner: ${esc(owner)}</span>${agent ? `<span>Agent: ${esc(agent)}</span>` : ""}</div>` : ""}`;
+}
+
+// ---------- Scorecards ----------
+const card = (k, body, note, wide) => `<div class="card${wide ? " wide" : ""}"><div class="k">${k}</div>${body}${note ? `<div class="note">${note}</div>` : ""}</div>`;
+
+function cardMaintenance(f) {
+  const r = f.check_maintenance_record; if (!r) return "";
+  const c = r.open_by_class || {};
+  const area = f.get_neighborhood_context?.open_violations_per_apartment;
+  const oldest = (r.oldest_open || [])[0];
+  return card("Maintenance · open HPD violations",
+    `<div class="big">${r.open_violations} <small>open · ${fmt(r.open_per_apartment)} per apt</small></div>
+     <div class="vs">${area ? `Area median ${fmt(area.area_median)} per apt` : "Compare: ask “is that normal for the area?”"}</div>
+     <div class="chips"><span class="chip ${c.C?.count ? "bad" : ""}">C ${c.C?.count ?? 0} immediately hazardous</span><span class="chip ${c.B?.count ? "warn" : ""}">B ${c.B?.count ?? 0} hazardous</span><span class="chip">A ${c.A?.count ?? 0}</span></div>
+     <ul class="list">${oldest ? `<li><span>Oldest open: ${esc(oldest.what?.length > 70 ? oldest.what.slice(0, 68).replace(/\s+\S*$/, "") + "…" : oldest.what)}</span><span>since ${esc(oldest.open_since)}</span></li>` : ""}
+       <li><span>Median days open</span><span>${fmt(r.days_open?.median, 0)}</span></li>
+       <li><span>Fixed since 2023 (median days to close)</span><span>${r.fixed_since_2023?.count} (${fmt(r.fixed_since_2023?.median_days_to_close, 0)})</span></li></ul>`,
+    "“Open” can mean fixed but never certified.");
+}
+
+function barChart(entries, w = 240, h = 70) {
+  if (!entries.length) return "";
+  const max = Math.max(...entries.map((e) => e[1]), 1);
+  const bw = Math.max(6, Math.min(26, (w - 10) / entries.length - 4));
+  const slot = Math.max(bw + 4, 42);  // room for a "Dec '25" label under each bar
+  const bars = entries.map(([label, v], i) => {
+    const bh = (v / max) * (h - 22), x = 4 + i * slot + (slot - 4 - bw) / 2, y = h - 14 - bh;
+    return `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="#17140f"/><text x="${x + bw / 2}" y="${y - 2}" font-size="9" text-anchor="middle">${v}</text>
+      <text x="${x + bw / 2}" y="${h - 3}" font-size="8" text-anchor="middle" fill="#6e675b">${esc(label)}</text>`;
+  }).join("");
+  const width = Math.max(w, 8 + entries.length * slot);
+  return `<svg viewBox="0 0 ${width} ${h}" width="100%" height="${h}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="bar chart">${bars}</svg>`;
+}
+
+function cardComplaints(f) {
+  const r = f.get_tenant_complaints; if (!r) return "";
+  if (r.complaints == null) return card("Tenant complaints", `<div class="big">${r.complaints_since_2023 ?? "—"}</div>`, esc(r.source));
+  const area = f.get_neighborhood_context?.heat_complaints_per_100_apartments_since_2023;
+  const months = Object.entries(r.by_month?.counts || {}).map(([m, n]) => [m.replace(/ 20(\d\d)/, " '$1"), n]);
+  const cats = Object.entries(r.by_category || {}).slice(0, 5).map(([k, v]) => `<span class="chip">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
+  return card("Tenant complaints to HPD · since 2023",
+    `<div class="big">${r.complaints} <small>complaints · ${fmt(r.complaints_per_apartment)} per apt</small></div>
+     ${area ? `<div class="vs">Heat: ${fmt(area.this_building, 1)} per 100 apts here vs ${fmt(area.area, 1)} nearby</div>` : ""}
+     <div class="chips">${cats}</div>
+     ${months.length ? `<div class="vs" style="margin-top:6px">${esc((r.by_month.category || "").replace(/_/g, " "))} by month</div>${barChart(months)}` : ""}`,
+    "Counted once per complaint. “Closed” means the city closed the case.");
+}
+
+function cardPests(f) {
+  const r = f.check_pests; if (!r) return "";
+  const rats = r.rodent_inspections_since_2023 || {};
+  const area = f.get_neighborhood_context?.rats;
+  const bugs = Array.isArray(r.bedbug_filings) ? r.bedbug_filings[0] : null;
+  return card("Rats & bedbugs",
+    `<div class="big">${rats.failed_for_rats}/${rats.inspections} <small>rat inspections failed since 2023</small></div>
+     <div class="vs">${rats.last_failed ? "Last failed " + esc(rats.last_failed) : "No failures"}${area ? ` · ${esc(area.share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023)} of nearby rental lots failed one` : ""}</div>
+     <ul class="list"><li><span>Latest bedbug filing</span><span>${bugs ? `${esc(bugs.filed)}: ${bugs.infested_units} infested` : "none on file"}</span></li></ul>`,
+    r.bedbug_disclosure ? esc(r.bedbug_disclosure.split(" Source:")[0]) : "Rat inspections cover the whole lot; bedbug filings are self-reported.");
+}
+
+function cardCourt(f) {
+  const r = f.check_evictions_and_court; if (!r) return "";
+  const cases = r.hpd_court_cases || {};
+  return card("Evictions & housing court",
+    `<div class="big">${r.residential_evictions_since_2023?.count} <small>marshal evictions since 2023</small></div>
+     <div class="vs">${cases.since_2023} HPD court cases since 2023 · ${cases.total_on_record} on record</div>
+     <ul class="list">${(cases.recent || []).slice(0, 3).map((c) => `<li><span>${esc(c.meaning)}</span><span>${esc(c.opened)}</span></li>`).join("")}</ul>`,
+    "Evictions carried out, not cases filed.");
+}
+
+function cardLandlord(f) {
+  const r = f.get_landlord_portfolio; if (!r) return "";
+  return card(`Landlord · ${esc(r.owner?.name)} (${esc(r.owner?.registered_role)})`,
+    `<div class="big">${r.buildings} <small>buildings · ${fmt(r.apartments, 0)} apts</small></div>
+     <div class="vs">Portfolio: ${fmt(r.portfolio_per_apartment)} open violations/apt · this building ${fmt(r.this_building?.per_apartment)} (${esc(r.this_building?.rank_worst_first || "unranked")})</div>
+     <div class="vs">${r.evictions_since_2023} evictions and ${r.hpd_cases_since_2023} HPD cases across the portfolio since 2023</div>
+     <ul class="list">${(r.worst_buildings || []).slice(0, 5).map((b) => `<li><span>${esc(b.address)} · ${b.apartments} apts</span><span>${fmt(b.per_apartment)}/apt</span></li>`).join("")}</ul>`,
+    "Matched by name on HPD registrations: may include a namesake, and misses LLCs run by others. Toggle “Landlord's buildings” on the map.", true);
+}
+
+function cardArea(f) {
+  const r = f.get_neighborhood_context; if (!r) return "";
+  const v = r.open_violations_per_apartment || {};
+  return card(`Vs. ${r.compared?.rental_buildings} rentals within ${r.radius_miles} mi`,
+    `<div class="big">${fmt(v.this_building)} <small>vs ${fmt(v.area_median)} median /apt</small></div>
+     <div class="vs">${esc(v.this_building_vs_area)}</div>
+     <ul class="list">${(r.worst_nearby || []).slice(0, 3).map((b) => `<li><span>${esc(b.address || "(no address on file)")}</span><span>${fmt(b.per_apartment)}/apt</span></li>`).join("")}</ul>`,
+    `Snapshot as of ${esc(r.as_of?.open_violations)}. Map dots: open violations per apartment.`);
+}
+
+function sunChart(side) {
+  const order = ["today", "winter (Dec 21)", "spring (Mar 20)", "summer (Jun 21)"];
+  const labels = ["Today", "Dec 21", "Mar 20", "Jun 21"];
+  const h = 92, w = 250, maxH = 12;
+  const y = (v) => h - 16 - (v / maxH) * (h - 26);
+  const bars = order.map((k, i) => {
+    const [m, lo, hi] = side.hours_median_min_max[k] || [0, 0, 0];
+    const x = 30 + i * 55;
+    return `<rect x="${x}" y="${y(m)}" width="22" height="${h - 16 - y(m)}" fill="#ffd23f" stroke="#17140f"/>
+      <line x1="${x + 11}" x2="${x + 11}" y1="${y(hi)}" y2="${y(lo)}" stroke="#17140f" stroke-width="1.5"/>
+      <line x1="${x + 6}" x2="${x + 16}" y1="${y(hi)}" y2="${y(hi)}" stroke="#17140f"/><line x1="${x + 6}" x2="${x + 16}" y1="${y(lo)}" y2="${y(lo)}" stroke="#17140f"/>
+      <text x="${x + 11}" y="${y(hi) - 3}" font-size="9" text-anchor="middle">${m}h</text>
+      <text x="${x + 11}" y="${h - 3}" font-size="9" text-anchor="middle" fill="#6e675b">${labels[i]}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="direct sun hours by season">
+    <line x1="24" x2="${w}" y1="${h - 16}" y2="${h - 16}" stroke="#d6cebd"/><text x="0" y="${y(12) + 3}" font-size="8" fill="#6e675b">12h</text><text x="4" y="${y(6) + 3}" font-size="8" fill="#6e675b">6h</text>${bars}</svg>`;
+}
+
+function cardSun(f) {
+  const r = f.estimate_sunlight; if (!r || !r.sides) return "";
+  const sides = r.sides.slice(0, 4).map((s) => `<div style="margin-top:8px"><div class="vs"><b>${esc(s.side)}</b></div>
+    <div class="vs mono" style="font-size:12px">Today: ${esc(s.sun.today)}</div>${sunChart(s)}
+    ${s.main_blocker_today ? `<div class="vs" style="font-size:12px">Main blocker today: ${esc(s.main_blocker_today.address || "a building")} (${s.main_blocker_today.height_ft} ft, ${s.main_blocker_today.distance_m} m ${esc(s.main_blocker_today.direction)})</div>` : ""}</div>`).join("");
+  return card(`Direct sun · floor ${r.floor} of ${r.floors_in_building}`,
+    `<div class="vs">Median hours of direct sun, with the uncertainty range (bars), per side of the building.</div>${sides}`,
+    "Direct sun only: reflected light isn't counted. Ranges vary floor height, window position and neighbors' heights (a sensitivity analysis).", true);
+}
+
+function cardSweep(f) {
+  const r = f.sun_sweep; if (!r) return "";
+  return card(`Winter sun by floor · ${esc(r.side)}`,
+    `<ul class="list"><li><span>Dec 21</span><span>${esc(r.winter_sun_by_floor)}</span></li><li><span>Today</span><span>${esc(r.today_sun_by_floor)}</span></li></ul>
+     <div class="vs" style="margin-top:6px">${r.lowest_floor_with_1h_winter_sun ? `Lowest floor with 1h+ winter sun: <b>${r.lowest_floor_with_1h_winter_sun}</b>` : "No floor on this side gets 1h+ of direct winter sun."}</div>`,
+    "Rounded to the nearest half hour.");
+}
+
+function cardWalk(f) {
+  const r = f.night_walk_check; if (!r) return "";
+  const cmp = r.comparison?.citywide || {};
+  return card(`Night walk · ${esc(r.station?.name)} (${esc((r.station?.lines || []).join(" "))})`,
+    `<div class="big">${r.incidents_on_route} <small>reported street incidents · ${esc(r.hours_checked)}</small></div>
+     <div class="vs">~${r.walk?.minutes} min walk · ${esc(r.period?.from)} to ${esc(r.period?.to)}</div>
+     <div class="vs">Of ${fmt(cmp.walks_compared, 0)} similar-length walks from NYC stations, ${cmp.share_with_more_incidents_pct}% had more and ${cmp.share_with_same_count_pct}% the same.</div>
+     <div class="chips">${Object.entries(r.by_type || {}).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("")}</div>`,
+    "Reported incidents only. NYPD locations are approximate; the route is a straight-line corridor. Describes places and times, not people.");
+}
+
+const VERDICT_CLASS = { "supported": "v-supported", "partly supported": "v-partly", "not supported by city records": "v-not", "can't verify": "v-cant" };
+function cardListing(f) {
+  const r = f.fact_check_listing; if (!r) return "";
+  return card("Listing fact-check",
+    `<ul class="list">${(r.claims || []).map((c) => `<li style="display:block"><span class="verdict ${VERDICT_CLASS[c.verdict] || "v-cant"}">${esc(c.verdict)}</span> <b>${esc(c.claim.replace(/_/g, " "))}</b>
+       <div class="vs" style="font-size:12px;margin-top:2px">${esc(c.evidence)}</div></li>`).join("")}</ul>`,
+    "Verdicts compare listing language with city records, using the rule stated in each line.", true);
+}
+
+const SEV = { "likely not allowed under NY law": "sev-not", "inconsistent": "sev-inc", "check with landlord": "sev-check" };
+function cardLease(r) {
+  const flags = (r.flags || []).map((x) => `<div class="flag ${SEV[x.severity] || ""}"><div class="sev">${esc(x.severity)}</div>
+    ${x.clause_excerpt ? `<q>${esc(x.clause_excerpt)}</q>` : ""}<div>${esc(x.explanation)}</div>
+    ${x.source_url ? `<div style="font-size:11.5px;margin-top:2px">${esc(x.citation || "")} · <a href="${esc(x.source_url)}" target="_blank" rel="noopener">official source</a></div>` : ""}</div>`).join("");
+  const missing = (r.missing_disclosures || []).map((m) => `<div class="flag sev-check"><div class="sev">missing disclosure</div><div>${esc(m.disclosure)} (${esc(m.applies)})</div>
+    <div style="font-size:11.5px">${esc(m.citation)} · <a href="${esc(m.source)}" target="_blank" rel="noopener">official source</a></div></div>`).join("");
+  const counts = r.flag_counts || {};
+  return card(`Lease review${r.is_sample ? " · fictional sample" : ""}`,
+    `<div class="chips"><span class="chip bad">${counts["likely not allowed under NY law"] || 0} likely not allowed</span><span class="chip warn">${counts["inconsistent"] || 0} inconsistent</span><span class="chip">${counts["check with landlord"] || 0} check with landlord</span></div>${flags}${missing}`,
+    esc(r.note), true);
+}
+
+function cardLetter(r) {
+  return card(`Repair letter <button class="btn-ghost" data-copy>Copy</button>`,
+    `<div class="vs">${(r.cited_violations || []).length} open violation(s) cited${r.matching_violations_in_other_apartments ? ` · matching violations in apt ${esc(r.matching_violations_in_other_apartments.join(", "))} (tell the chat if that's yours)` : ""}</div>
+     <div class="letter">${esc(r.letter_text)}</div>
+     <ul class="list">${(r.escalation_steps || []).map((s) => `<li><span>${esc(s)}</span></li>`).join("")}</ul>`,
+    "A template, not legal advice.", true);
+}
+
+// ---------- Map ----------
+let map = null, layers = null, control = null;
+const rateColor = (v) => v == null ? "#999" : v === 0 ? "#1f6b3a" : v < 0.5 ? "#8aa63a" : v < 1 ? "#e0a800" : v < 2 ? "#d0611b" : "#a8241a";
+function renderMap(f) {
+  const b = f.look_up_building;
+  const center = b ? [b.lat, b.lon] : null;
+  if (!center) { $("map").style.display = "none"; $("map-legend").innerHTML = ""; return; }
+  $("map").style.display = "block";
+  if (!map) {
+    map = L.map("map", { scrollWheelZoom: false });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    // Turning on the landlord's buildings zooms out to show them all.
+    map.on("overlayadd", (e) => { if (e.name.startsWith("Landlord")) map.fitBounds(L.featureGroup(e.layer.getLayers()).getBounds().pad(0.2)); });
+  }
+  if (layers) layers.forEach((l) => map.removeLayer(l));
+  if (control) map.removeControl(control);
+  layers = [];
+  const overlays = {};
+  const legend = [];
+
+  const area = f.get_neighborhood_context;
+  if (area?.points) {
+    const g = L.layerGroup(area.points.map(([lat, lon, v]) => L.circleMarker([lat, lon], { radius: 4.5, weight: 0.6, color: "#17140f", fillColor: rateColor(v), fillOpacity: 0.85 }).bindTooltip(`${fmt(v)} open violations/apt`)));
+    overlays["Nearby rentals (violations/apt)"] = g; g.addTo(map); layers.push(g);
+    legend.push(`<span><i style="background:#1f6b3a"></i>0</span><span><i style="background:#8aa63a"></i>&lt;0.5</span><span><i style="background:#e0a800"></i>&lt;1</span><span><i style="background:#d0611b"></i>&lt;2</span><span><i style="background:#a8241a"></i>2+ open violations/apt</span>`);
+  }
+  const port = f.get_landlord_portfolio;
+  if (port?.all_buildings) {
+    const g = L.layerGroup(port.all_buildings.filter((x) => x[4]).map(([addr, apts, open, per, lat, lon]) =>
+      L.marker([lat, lon], { icon: L.divIcon({ className: "", html: `<div style="width:12px;height:12px;background:${rateColor(per)};border:2px solid #17140f;transform:rotate(45deg)"></div>`, iconSize: [12, 12] }) })
+        .bindTooltip(`${esc(addr)}: ${open} open (${fmt(per)}/apt)`)));
+    overlays["Landlord's buildings ◆"] = g; layers.push(g);
+  }
+  const walk = f.night_walk_check;
+  if (walk?.walk?.route_lat_lon) {
+    const parts = [L.polyline(walk.walk.route_lat_lon, { color: "#17140f", weight: 4, dashArray: "6 6" }).bindTooltip("Walk corridor (straight line)"),
+      L.circleMarker(walk.walk.route_lat_lon[0], { radius: 7, color: "#17140f", weight: 2, fillColor: "#fff", fillOpacity: 1 }).bindTooltip(esc(walk.station?.name))];
+    for (const [lat, lon, type, date, hour] of walk.points || []) parts.push(L.circleMarker([lat, lon], { radius: 5, color: "#a8241a", fillColor: "#a8241a", fillOpacity: 0.7 }).bindTooltip(`${esc(type)} · ${esc(date)} · ${hour}:00`));
+    const g = L.layerGroup(parts); overlays["Night walk"] = g; g.addTo(map); layers.push(g);
+    legend.push(`<span><i style="background:#a8241a"></i>reported incident (night)</span>`);
+  }
+  const sun = f.estimate_sunlight;
+  if (sun?.sides) {
+    const parts = [];
+    for (const s of sun.sides) {
+      const t = s.hours_median_min_max?.today?.[0] ?? 0;
+      parts.push(L.polyline(s.wall_lat_lon, { color: t >= 3 ? "#e0a800" : t >= 1 ? "#d0611b" : "#555", weight: 7, opacity: 0.95 }).bindTooltip(`${esc(s.side)}: ${esc(s.sun.today)}`));
+      if (s.main_blocker_today) parts.push(L.circleMarker([s.main_blocker_today.lat, s.main_blocker_today.lon], { radius: 6, color: "#17140f", fillColor: "#555", fillOpacity: 0.8 })
+        .bindTooltip(`Blocks the ${esc(s.side.split(",")[0])}: ${esc(s.main_blocker_today.address || "building")}, ${s.main_blocker_today.height_ft} ft`));
+    }
+    const g = L.layerGroup(parts); overlays["Sun on each wall (today)"] = g; g.addTo(map); layers.push(g);
+    legend.push(`<span><i style="background:#e0a800;border-radius:0"></i>3h+ sun</span><span><i style="background:#d0611b;border-radius:0"></i>1-3h</span><span><i style="background:#555;border-radius:0"></i>&lt;1h</span>`);
+  }
+  const pin = L.marker(center).bindTooltip(esc(b.address)); pin.addTo(map); layers.push(pin);
+  if (Object.keys(overlays).length) control = L.control.layers(null, overlays, { collapsed: window.innerWidth < 700, position: "topright" }).addTo(map);
+  map.setView(center, walk ? 16 : 17);
+  $("map-legend").innerHTML = legend.join("");
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
+// ---------- Start ----------
+$("examples").innerHTML = EXAMPLES.map((e, i) => `<button class="example${e.lease ? " lease" : ""}" data-i="${i}"><span class="k">${esc(e.k)}</span>${esc(e.lease ? "Try a sample lease (fictional, for 184 Claremont Ave Apt 4B)" : e.text)}</button>`).join("");
+$("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => { const e = EXAMPLES[b.dataset.i]; e.lease ? trySampleLease() : send(e.text); }));
+
+// Resume after a refresh: the server knows the session from its cookie.
+(async () => {
+  try {
+    const r = await (await fetch("/session")).json();
+    if (!r.session_id) return;
+    setSession(r.session_id);
+    if (r.history?.length) {
+      $("start").hidden = true;
+      for (const m of r.history) m.role === "user" ? addUser(m.content) : addBot(m.content, []);
+      absorb(r.tool_calls || []);
+    }
+  } catch { /* first visit */ }
+})();
+input.focus();
+</script>
+</body>
 </html>
