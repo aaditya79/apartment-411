@@ -143,6 +143,24 @@ def main():
         assert bodies[-1]["message"] == pests["example"] and picks[-1]["tool"] == "check_pests"
         assert page.is_hidden("#tool-chip")
         print("ok  empty send with a picked check asks its example")
+        # 12. Several night walks in one turn: every route, station and label is drawn.
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.goto(BASE)
+        page.fill("#input", "2053 Frederick Douglass Blvd, tell me about the night walk from the closest 2 stop, 1 stop and C stop.")
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=180_000) as reply:
+            page.click("#send")
+        walks = [c for c in reply.value.json()["tool_calls"] if c["name"] == "night_walk_check"
+                 and "error" not in json.loads(c["result"]) and not json.loads(c["result"]).get("duplicate")]
+        assert len(walks) == 3, [c["args"] for c in walks]
+        page.wait_for_selector("path.walk-route")
+        page.wait_for_timeout(500)
+        assert page.locator("path.walk-route").count() == 3, page.locator("path.walk-route").count()
+        assert page.locator("path.walk-station").count() == 3
+        labels = sorted(page.locator(".leaflet-tooltip.station-label").all_inner_texts())
+        assert len(labels) == 3 and len(set(labels)) == 3 and all(" · " in l for l in labels), labels
+        assert page.locator(".card", has_text="Night walks · 3 stations").locator("li").count() == 3
+        page.screenshot(path=str(Path(__file__).parent.parent / "scratch" / "shots" / "three_walks.png"))
+        print(f"ok  3 night walks: 3 routes, 3 station markers, labels {labels}, one card row each")
         browser.close()
     print("All UI tests passed.")
 

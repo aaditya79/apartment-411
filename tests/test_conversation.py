@@ -177,6 +177,9 @@ check(len(walks) <= 4, f"expected about one night_walk_check per line, got {len(
 check({"1", "2", "C"} <= set(lines_asked), f"should ask by line 2, 1 and C; asked {lines_asked}")
 check(len(stations) == len(set(stations)) == 3, f"three distinct stations expected, got {stations}")
 check("tool-call limit" not in s["response"], "must finish with an answer, not the tool-call limit")
+ending = s["response"].strip().split("\n")[-1]
+check("Cathedral Pkwy" in ending and "C" in ending,
+      f"should end by recommending the C at Cathedral Pkwy (2 min, 0 incidents); ended with: {ending[:200]}")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")

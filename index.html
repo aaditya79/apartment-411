@@ -159,6 +159,7 @@ details.capabilities > summary { cursor: pointer; font: 600 12px var(--mono); le
 .map-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid #0006; margin-right: 4px; vertical-align: -1px; }
 .leaflet-container { font: 12px var(--sans); }
 .leaflet-tile-pane { filter: grayscale(.85) contrast(1.05); }
+.leaflet-tooltip.station-label { font: 600 11px var(--mono); padding: 1px 5px; border: 1px solid var(--ink); border-radius: 2px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .card { background: var(--card); border: 1px solid var(--ink); border-radius: 2px; padding: 10px 12px; min-width: 0; }
 .card.wide { grid-column: 1 / -1; }
@@ -559,10 +560,16 @@ async function trySampleLease() {
 }
 
 // ---------- Building file ----------
+const walkKey = (r) => `${r.station?.name}|${(r.station?.lines || []).join(" ")}`;
 function absorb(calls) {
+  const turnWalks = {};  // address -> this turn's night walks (several when the user names several lines)
   for (const c of calls || []) {
     const r = parse(c.result);
     if (r.error) continue;
+    if (c.name === "night_walk_check" && r.address && !r.duplicate) {
+      const list = (turnWalks[r.address] = turnWalks[r.address] || []);
+      if (!list.some((w) => walkKey(w) === walkKey(r))) list.push(r);
+    }
     if (c.name === "review_lease") { leaseResult = r; }
     if (c.name === "draft_repair_request") { letterResult = r; }
     const addr = r.address || (c.name === "draft_repair_request" ? shownAddress : null);
@@ -574,6 +581,8 @@ function absorb(calls) {
     fileOrder = fileOrder.filter((a) => a !== addr).concat(addr);
     shownAddress = addr;
   }
+  // A turn that checked night walks replaces that building's walks with all of them.
+  for (const [addr, walks] of Object.entries(turnWalks)) files[addr].night_walks = walks;
   renderPanel();
 }
 
@@ -735,14 +744,23 @@ function cardSweep(f) {
 }
 
 function cardWalk(f) {
-  const r = f.night_walk_check; if (!r) return "";
+  const walks = f.night_walks || (f.night_walk_check ? [f.night_walk_check] : []);
+  if (!walks.length) return "";
+  const note = "Reported incidents only. NYPD locations are approximate; each route is a straight-line corridor. Describes places and times, not people.";
+  if (walks.length > 1) {
+    const rows = walks.map((w, i) => `<li><span><i style="display:inline-block;width:10px;height:3px;background:${WALK_COLORS[i % WALK_COLORS.length]};vertical-align:middle;margin-right:6px"></i>${esc(w.station?.name)} · ${esc((w.station?.lines || []).join(" "))}</span>
+      <span>~${w.walk?.minutes} min · ${w.incidents_on_route} incident${w.incidents_on_route === 1 ? "" : "s"}</span></li>`).join("");
+    return card(`Night walks · ${walks.length} stations · ${esc(walks[0].hours_checked)}`,
+      `<ul class="list">${rows}</ul><div class="vs" style="margin-top:6px">${esc(walks[0].period?.from)} to ${esc(walks[0].period?.to)}</div>`, note, true);
+  }
+  const r = walks[0];
   const cmp = r.comparison?.citywide || {};
   return card(`Night walk · ${esc(r.station?.name)} (${esc((r.station?.lines || []).join(" "))})`,
     `<div class="big">${r.incidents_on_route} <small>reported street incidents · ${esc(r.hours_checked)}</small></div>
      <div class="vs">~${r.walk?.minutes} min walk · ${esc(r.period?.from)} to ${esc(r.period?.to)}</div>
      <div class="vs">Of ${fmt(cmp.walks_compared, 0)} similar-length walks from NYC stations, ${cmp.share_with_more_incidents_pct}% had more and ${cmp.share_with_same_count_pct}% the same.</div>
      <div class="chips">${Object.entries(r.by_type || {}).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("")}</div>`,
-    "Reported incidents only. NYPD locations are approximate; the route is a straight-line corridor. Describes places and times, not people.");
+    note);
 }
 
 const VERDICT_CLASS = { "supported": "v-supported", "partly supported": "v-partly", "not supported by city records": "v-not", "can't verify": "v-cant" };
@@ -776,6 +794,7 @@ function cardLetter(r) {
 }
 
 // ---------- Map ----------
+const WALK_COLORS = ["#17140f", "#2f4a6b", "#9a5b00", "#1f6b3a", "#6b2f5f"];
 let map = null, layers = null, control = null;
 const rateColor = (v) => v == null ? "#999" : v === 0 ? "#1f6b3a" : v < 0.5 ? "#8aa63a" : v < 1 ? "#e0a800" : v < 2 ? "#d0611b" : "#a8241a";
 function renderMap(f) {
@@ -784,7 +803,8 @@ function renderMap(f) {
   if (!center) { $("map").style.display = "none"; $("map-legend").innerHTML = ""; return; }
   $("map").style.display = "block";
   if (!map) {
-    map = L.map("map", { scrollWheelZoom: false });
+    map = L.map("map", { scrollWheelZoom: false, zoomControl: false });
+    L.control.zoom({ position: "bottomleft" }).addTo(map);  // keeps the top corners free for station labels
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
     // Turning on the landlord's buildings zooms out to show them all.
     map.on("overlayadd", (e) => { if (e.name.startsWith("Landlord")) map.fitBounds(L.featureGroup(e.layer.getLayers()).getBounds().pad(0.2)); });
@@ -808,12 +828,25 @@ function renderMap(f) {
         .bindTooltip(`${esc(addr)}: ${open} open (${fmt(per)}/apt)`)));
     overlays["Landlord's buildings ◆"] = g; layers.push(g);
   }
-  const walk = f.night_walk_check;
-  if (walk?.walk?.route_lat_lon) {
-    const parts = [L.polyline(walk.walk.route_lat_lon, { color: "#17140f", weight: 4, dashArray: "6 6" }).bindTooltip("Walk corridor (straight line)"),
-      L.circleMarker(walk.walk.route_lat_lon[0], { radius: 7, color: "#17140f", weight: 2, fillColor: "#fff", fillOpacity: 1 }).bindTooltip(esc(walk.station?.name))];
-    for (const [lat, lon, type, date, hour] of walk.points || []) parts.push(L.circleMarker([lat, lon], { radius: 5, color: "#a8241a", fillColor: "#a8241a", fillOpacity: 0.7 }).bindTooltip(`${esc(type)} · ${esc(date)} · ${hour}:00`));
-    const g = L.layerGroup(parts); overlays["Night walk"] = g; g.addTo(map); layers.push(g);
+  const walks = (f.night_walks || (f.night_walk_check ? [f.night_walk_check] : [])).filter((w) => w.walk?.route_lat_lon);
+  let walkBounds = null;
+  if (walks.length) {
+    const parts = [];
+    walkBounds = L.latLngBounds([center]);
+    walks.forEach((w, i) => {
+      const color = WALK_COLORS[i % WALK_COLORS.length];
+      const label = `${w.station?.name} · ${(w.station?.lines || []).join(" ")}`;
+      parts.push(L.polyline(w.walk.route_lat_lon, { color, weight: 4, dashArray: "6 6", className: "walk-route" })
+        .bindTooltip(`${esc(label)}: ~${w.walk.minutes} min, ${w.incidents_on_route} reported incident(s)`));
+      parts.push(L.circleMarker(w.walk.route_lat_lon[0], { radius: 7, color, weight: 3, fillColor: "#fff", fillOpacity: 1, className: "walk-station" })
+        .bindTooltip(esc(label), { permanent: true, direction: "top", offset: [0, -8], className: "station-label" }));
+      for (const [lat, lon, type, date, hour] of w.points || []) {
+        parts.push(L.circleMarker([lat, lon], { radius: 5, color: "#a8241a", fillColor: "#a8241a", fillOpacity: 0.7 })
+          .bindTooltip(`${esc(type)} · ${esc(date)} · ${hour}:00 · on the walk from ${esc(label)}`));
+      }
+      w.walk.route_lat_lon.forEach((pt) => walkBounds.extend(pt));
+    });
+    const g = L.layerGroup(parts); overlays[walks.length > 1 ? `Night walks (${walks.length})` : "Night walk"] = g; g.addTo(map); layers.push(g);
     legend.push(`<span><i style="background:#a8241a"></i>reported incident (night)</span>`);
   }
   const sun = f.estimate_sunlight;
@@ -830,7 +863,9 @@ function renderMap(f) {
   }
   const pin = L.marker(center).bindTooltip(esc(b.address)); pin.addTo(map); layers.push(pin);
   if (Object.keys(overlays).length) control = L.control.layers(null, overlays, { collapsed: window.innerWidth < 700, position: "topright" }).addTo(map);
-  map.setView(center, walk ? 16 : 17);
+  // Room around the routes for the station labels, which sit above and beside their markers.
+  if (walkBounds) map.fitBounds(walkBounds, { paddingTopLeft: [110, 50], paddingBottomRight: [110, 20], maxZoom: 17 });
+  else map.setView(center, 17);
   $("map-legend").innerHTML = legend.join("");
   setTimeout(() => map.invalidateSize(), 50);
 }

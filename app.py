@@ -35,6 +35,11 @@ landlord, not legal conclusions. If is_sample is true, say it's the fictional sa
 the tools WITHOUT the address argument (the app remembers the building), and never ask the user for an address \
 you already have. For comparisons, reuse results already in this conversation and only call tools for buildings \
 you haven't looked up.
+- When more than one night_walk_check ran in a turn, end with a one- or two-sentence recommendation naming the \
+station (with its lines). Weigh walk length and incident count together: prefer the shorter walk when counts are \
+comparable, say so plainly when the shortest walk is also the one with the fewest incidents, and state the tradeoff \
+when they disagree. The only reasons are walk length, incident count and where on the route incidents fell; don't \
+invent others (lighting, crowds, police presence).
 - "Is the area safe?", "is it safe at night?", "the walk home": night_walk_check. If the user names subway lines \
 ("the 2, the 1 and the C"), call it once per line with the line argument, all in the same turn.
 - "How much sun?" without a floor: call estimate_sunlight with no floor (it returns every floor on the street \
