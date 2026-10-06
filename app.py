@@ -30,8 +30,14 @@ Then offer the sunlight check (ask which floor and which side if you don't know)
 - An uploaded or pasted lease ("review my lease"): review_lease. Present its flags as questions to raise with the \
 landlord, not legal conclusions. If is_sample is true, say it's the fictional sample lease.
 - A current tenant describing a repair problem: draft_repair_request, and show the letter in full. Use only the apartment and name the user gave you; if the tool reports matching violations in other apartments, ask whether one of them is theirs instead of assuming.
-- Follow-ups are about the building already being discussed unless the user names another one. For comparisons, \
-reuse results already in this conversation and only call tools for buildings you haven't looked up.
+- Follow-ups are about the building already being discussed unless the user names another one. For those, call \
+the tools WITHOUT the address argument (the app remembers the building), and never ask the user for an address \
+you already have. For comparisons, reuse results already in this conversation and only call tools for buildings \
+you haven't looked up.
+- "Is the area safe?", "is it safe at night?", "the walk home": night_walk_check. If the user names subway lines \
+("the 2, the 1 and the C"), call it once per line with the line argument, all in the same turn.
+- "How much sun?" without a floor: call estimate_sunlight with no floor (it returns every floor on the street \
+side), then offer a detailed check once they tell you their floor.
 - You cannot plan commutes or estimate travel times or distances; if asked, say only that, and offer the night-walk check from the station they'd use. Never describe where places are from your own knowledge: no "a few blocks from campus", "walking distance", "close to the park". The only distances you may give are the walk minutes a tool returned.
 
 Rules:
@@ -41,13 +47,20 @@ conversation. If a tool returns an error, say what couldn't be checked and follo
 like: a rate with a rate (per apartment or per 100 apartments), a count with a count, never a count with a rate. \
 When a tool gives a ready-made comparison (compare_as, this_building_vs_area), use it.
 - Say "open violation", not "unfixed problem", and mention once that open can mean fixed but not certified.
-- Sun times are approximate ranges; mention that reflected light isn't counted when brightness matters.
+- Sun: lead with the median hours; mention the range only as "up to X h". Sun times are approximate. Explain \
+differences only with what the tool returned (the blocking building, its height, distance and direction, which \
+way the wall faces, the open space in front of it). Never invoke mechanisms the tool doesn't compute, such as \
+reflected light, "bounce", trees or glare. Say that reflected light isn't counted when brightness matters.
 - Crime: report counts with their context and period only. Never call a place or its residents dangerous or safe, \
 and never mention demographics.
 - Talk about named people neutrally: report what the records say, never judge character or intent. Refer to a \
 person by name or "they"; never guess anyone's gender.
 - Copy names, numbers, IDs and dates exactly as the tool returned them (e.g. an LLC's name character for character).
 - This is not legal advice; point to the official sources the tools return.
+
+Only list a metric under red flags when the tool's own comparison shows it worse than the area (or, with no \
+comparison, when it's clearly a problem: hazardous violations, failed rat inspections, evictions). If it's at or \
+better than the area, it's context or a green flag.
 
 Format for a building report: a one-sentence verdict, then "🚩 Red flags", then "✅ Green flags", then three \
 specific questions to ask the broker or landlord, then one line on data limits. About 250 words unless the user \
@@ -94,12 +107,22 @@ def run_one(call, state: dict) -> tuple[dict, str]:
     return args, result
 
 
+def call_key(call) -> str:
+    """Same tool + same arguments = same call, however the model ordered the keys."""
+    try:
+        args = json.loads(call.function.arguments or "{}")
+    except json.JSONDecodeError:
+        args = call.function.arguments
+    return call.function.name.strip() + json.dumps(args, sort_keys=True)
+
+
 def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
     """Complete until the model answers without asking for a tool.
 
     Returns the final text and a record of every tool call made along the way.
     """
     tool_calls = []
+    seen: dict[str, str] = {}  # call key -> result, so a repeated call this turn isn't run again
 
     for _ in range(MAX_TOOL_ROUNDS):
         reply = litellm.completion(
@@ -107,6 +130,7 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
             vertex_location="global",
             messages=messages,
             tools=TOOLS,
+            num_retries=3,  # Vertex returns 429 "resource exhausted" under bursts; back off and retry
         ).choices[0].message
 
         # Append assistant's reply (text, tool calls, or both) to the context.
@@ -119,13 +143,26 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
 
         # The harness, not the model, runs each tool and appends the result. A building report asks
         # for ~7 tools in one round; each waits on city data, so run them at the same time.
+        fresh = [c for c in reply.tool_calls if call_key(c) not in seen]
         with ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(pool.map(lambda call: run_one(call, state), reply.tool_calls))
-        for call, (args, result) in zip(reply.tool_calls, results):
-            tool_calls += [{"name": call.function.name.strip(), "args": args, "result": result}]
+            for call, (args, result) in zip(fresh, pool.map(lambda c: run_one(c, state), fresh)):
+                seen.setdefault(call_key(call), result)
+                tool_calls += [{"name": call.function.name.strip(), "args": args, "result": result}]
+        for call in reply.tool_calls:
+            result = seen[call_key(call)]
+            if call not in fresh:
+                result = json.dumps({"duplicate_call": "You already made this exact call this turn; its result "
+                                                       "is above. Don't repeat it; answer with what you have."})
             messages += [{"role": "tool", "tool_call_id": call.id, "content": for_the_model(result)}]
 
-    return "Sorry, I hit my tool-call limit before finishing.", tool_calls
+    # Out of rounds: still answer, from whatever the tools returned, rather than throwing it away.
+    messages += [{"role": "user", "content": "[Note from the app: the tool-call limit for this turn was reached. "
+                                             "Answer now using only the tool results above, and say briefly what "
+                                             "you couldn't check.]"}]
+    reply = litellm.completion(model=MODEL, vertex_location="global", messages=messages, tools=TOOLS,
+                               tool_choice="none", num_retries=3).choices[0].message
+    messages += [reply.model_dump()]
+    return reply.content or "I ran out of tool calls before I could finish; please ask again more narrowly.", tool_calls
 
 
 # --- Session Store ---

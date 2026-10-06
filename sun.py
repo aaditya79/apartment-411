@@ -373,12 +373,13 @@ def ensemble(site: Site, side: dict, floor: int, day: date, runs=None) -> dict:
         for blk in blockers:
             if blk >= 0:
                 blocked_by[blk] = blocked_by.get(blk, 0) + STEP_MIN / len(runs)
-    median = float(np.median(hours))
+    # The lower median is an actual run (an even count's plain median averages two runs, and then
+    # no run's sunny stretches add up to the headline hours), so hours and times always agree.
+    typical_run = sorted(range(len(runs)), key=lambda i: hours[i])[(len(runs) - 1) // 2]
+    median = hours[typical_run]
     result = {"hours": round(median, 1), "range": [round(min(hours), 1), round(max(hours), 1)]}
     if median > 0:
-        # The run whose total is closest to the median stands in for "typical".
-        typical = periods_by_run[min(range(len(runs)), key=lambda i: abs(hours[i] - median))]
-        result["periods"] = [f"{clock(a)}-{clock(b)}" for a, b in typical]
+        result["periods"] = [f"{clock(a)}-{clock(b)}" for a, b in periods_by_run[typical_run]]
     if blocked_by:
         main, minutes = max(blocked_by.items(), key=lambda kv: kv[1])
         result["main_blocker"] = {"index": main, "hours_blocked": round(minutes / 60, 1)}

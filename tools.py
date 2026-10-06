@@ -799,7 +799,7 @@ def sweep_summary(rows: list[tuple[int, float]]) -> str:
     return ", ".join(parts)
 
 
-def estimate_sunlight(state: dict, floor, side: str = "all", address: str | None = None) -> dict:
+def estimate_sunlight(state: dict, floor="all", side: str = "all", address: str | None = None) -> dict:
     b = current_building(address, state)
     site = site_for(b)
     sides = site.facades(street_name(b))
@@ -1255,23 +1255,83 @@ def station_label(st: dict) -> str:
     return f"{st['name']} ({' '.join(st['routes'])})"
 
 
-def find_station(name: str | None, b: nyc.Building, stations: list[dict]) -> dict:
-    by_distance = sorted(stations, key=lambda st: nyc.miles_between(b.lat, b.lon, st["lat"], st["lon"]))
+MAX_WALK_M = 2000  # farther than this isn't "the walk home from the subway"
+
+
+def station_key(st: dict) -> str:
+    return f"{st['name']}|{' '.join(st['routes'])}|{st['lat']:.5f},{st['lon']:.5f}"
+
+
+def normalize_station(text: str) -> set[str]:
+    t = text.lower().replace("-", " ")
+    t = re.sub(r"\b(street|st)\b", "st", t)
+    t = re.sub(r"\b(\d+)(st|nd|rd|th)\b", r"\1", t)
+    t = re.sub(r"\b(avenue|av|ave)\b", "av", t)
+    t = re.sub(r"\b(parkway|pkwy)\b", "pkwy", t)
+    return set(re.sub(r"[^a-z0-9 ]", " ", t).split()) - {"station", "stop", "the", "subway"}
+
+
+def nearby_list(b: nyc.Building, stations: list[dict], limit: int = 5) -> str:
+    return "; ".join(f"{station_label(st)} {st['_m']:.0f} m" for st in stations[:limit])
+
+
+def find_station(name: str | None, line: str | None, b: nyc.Building, stations: list[dict]) -> dict:
+    """The station to walk from: the nearest one, the nearest on a line, or the best name match nearby.
+
+    Never guesses: a weak or ambiguous name match returns an error listing the candidates, because
+    'Central Park North (110 St)' once matched the 6 train's '110 St', 1,355 m away on Lexington.
+    """
+    def with_distance(st: dict) -> dict:
+        return {**st, "_m": nyc.miles_between(b.lat, b.lon, st["lat"], st["lon"]) * 1609.34}
+
+    by_distance = sorted((with_distance(st) for st in stations), key=lambda st: st["_m"])
+    near = [st for st in by_distance if st["_m"] <= MAX_WALK_M]
+    if not near:
+        raise ToolError(f"No subway station is within {MAX_WALK_M / 1609:.1f} miles of {b.label}.",
+                        f"Tell the user the nearest is {station_label(by_distance[0])}, {by_distance[0]['_m'] / 1609:.1f} miles away.")
+
+    if line:
+        wanted = line.strip().upper().replace("TRAIN", "").replace("LINE", "").strip()
+        on_line = [st for st in near if wanted in [r.upper() for r in st["routes"]]]
+        if not on_line:
+            anywhere = [st for st in by_distance if wanted in [r.upper() for r in st["routes"]]][:2]
+            raise ToolError(f"No {wanted} train station within walking distance of {b.label}.",
+                            ("The nearest " + wanted + " stations are " + nearby_list(b, anywhere) + ". " if anywhere else "")
+                            + f"Stations within walking distance: {nearby_list(b, near)}.")
+        near = on_line
+        if not name:
+            return near[0]
     if not name:
-        return by_distance[0]
+        return near[0]
 
-    def norm(t: str) -> str:
-        t = re.sub(r"\b(street|st)\b", "st", t.lower())
-        t = re.sub(r"\b(\d+)(st|nd|rd|th)\b", r"\1", t)
-        return re.sub(r"[^a-z0-9 ]", " ", t).split() and " ".join(re.sub(r"[^a-z0-9 ]", " ", t).split())
-
-    wanted = norm(name)
-    matches = [st for st in by_distance if wanted in norm(st["name"]) or norm(st["name"]) in wanted]
-    if not matches:
-        raise ToolError(f"No subway station matches '{name}'.",
-                        f"The nearest stations are: {', '.join(station_label(st) for st in by_distance[:3])}. "
-                        "Ask the user which one, or omit station to use the nearest.")
-    return matches[0]  # the nearest station with that name
+    asked = normalize_station(name)
+    # Every nearby station whose name contains all the words asked ("110 St" is in three names
+    # near 111th St). One clear winner (the nearest, at under half the next one's distance) is
+    # fine; otherwise list them and let the user choose.
+    containing = [st for st in near if asked and asked <= normalize_station(st["name"])]
+    if containing:
+        if len(containing) == 1 or containing[0]["_m"] < 0.5 * containing[1]["_m"]:
+            return containing[0]
+        raise ToolError(f"'{name}' could mean more than one station near {b.label}.",
+                        f"Candidates: {nearby_list(b, containing)}. Ask the user which one, or pass line "
+                        "(e.g. '2') for the nearest station on that line.")
+    scored = []
+    for st in near:
+        tokens = normalize_station(st["name"])
+        overlap = len(asked & tokens) / len(asked | tokens) if asked | tokens else 0
+        scored.append((overlap, st))
+    scored.sort(key=lambda x: (-x[0], x[1]["_m"]))
+    best_score, best = scored[0]
+    # Different stations with the same name (several "116 St"s) aren't ambiguous: take the nearest.
+    rivals = [st for score, st in scored[1:] if score >= best_score - 0.1 and st["name"] != best["name"]]
+    if best_score < 0.5:
+        raise ToolError(f"No station within walking distance of {b.label} clearly matches '{name}'.",
+                        f"Stations within walking distance: {nearby_list(b, near)}. Ask the user which one, "
+                        "or pass line (e.g. '2') for the nearest station on a line.")
+    if rivals:
+        raise ToolError(f"'{name}' could mean more than one nearby station.",
+                        f"Candidates: {nearby_list(b, [best] + rivals)}. Ask the user which one, or pass line.")
+    return best
 
 
 def corridor_mask(points: np.ndarray, start: tuple, end: tuple, origin_lat: float) -> np.ndarray:
@@ -1343,7 +1403,8 @@ def live_incidents(start: tuple, end: tuple, window: list[str], after_hour: int)
     return [p for p in points if in_window(p[3], after_hour)]
 
 
-def night_walk_check(state: dict, address: str | None = None, station: str | None = None, after_hour: int = 21) -> dict:
+def night_walk_check(state: dict, address: str | None = None, station: str | None = None, line: str | None = None,
+                     after_hour: int = 21) -> dict:
     b = current_building(address, state)
     snap = nyc.load_snapshot()
     if not snap.get("stations"):
@@ -1356,12 +1417,15 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
         raise ToolError(f"after_hour must be 21-23 (got {after_hour}).",
                         "The comparison data covers 9pm-5am; use 21, 22 or 23.")
 
-    st = find_station(station, b, snap["stations"])
+    st = find_station(station, line, b, snap["stations"])
+    # Several spellings ("2 train", "110 St", "Malcolm X Plaza") can resolve to the same station:
+    # answer from the first check instead of running it again.
+    key = (b.bbl, station_key(st), after_hour)
+    done = state.setdefault("night_walks", {})
+    if key in done:
+        return {**done[key], "duplicate": "Same station as an earlier check in this conversation; reuse that result."}
     start, end = (st["lat"], st["lon"]), (b.lat, b.lon)
-    straight_m = nyc.miles_between(*start, *end) * 1609.34
-    if straight_m > 2000:
-        raise ToolError(f"{station_label(st)} is {straight_m / 1609:.1f} miles away, too far for a walk check.",
-                        "Ask the user which station they actually use, or omit station to use the nearest.")
+    straight_m = st["_m"]
     window = snap["crime_window"]
 
     try:
@@ -1403,7 +1467,7 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
                f"{station_label(st)} in the 12 months to {window[1]}; "
                f"of similar-length walks from NYC stations, {share_with_more(baseline)}% had more and "
                f"{share_with_same(baseline)}% had the same number.")
-    return {
+    result = {
         "address": b.label,
         "station": {"name": st["name"], "lines": st["routes"], "accessible": st["ada"]},
         "walk": {"minutes": minutes, "straight_line_m": round(straight_m),
@@ -1430,14 +1494,16 @@ def night_walk_check(state: dict, address: str | None = None, station: str | Non
         "note": NIGHT_WALK_NOTE + (" The NYPD publishes about 3 months behind, so the period ends "
                                    f"{window[1]}."),
     }
+    done[key] = result
+    return result
 
 
 # --- What the model sees ---
 
 ADDRESS_ARG = {
     "type": "string",
-    "description": ("NYC street address with borough, e.g. '155 East 92nd Street, Manhattan'. Omit to use the "
-                    "building already being discussed."),
+    "description": ("Only for a building other than the one being discussed: NYC street address with borough, e.g. "
+                    "'155 East 92nd Street, Manhattan'. Omit for follow-ups about the current building."),
 }
 
 TOOLS = [
@@ -1576,18 +1642,18 @@ TOOLS = [
                 "height for today, Dec 21, Mar 20 and Jun 21, per side of the building (street side, rear, side, "
                 "light court), with hours, times and an uncertainty range, plus the building that blocks it most. "
                 "floor='all' gives winter and today sun for every floor on the street side ('which floor gets "
-                "winter sun?'). Ask the user for their floor if unknown."),
+                "winter sun?'). Without a floor, it returns every floor on the street side."),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "floor": {"type": "string",
-                              "description": "Apartment floor as a number, e.g. '4', or 'all' for a floor-by-floor sweep."},
+                              "description": ("Apartment floor as a number, e.g. '4'. Omit (or 'all') when the floor "
+                                              "isn't known: returns winter and today sun for every floor on the street side.")},
                     "side": {"type": "string", "enum": ["all", "street", "rear", "side", "court", *COMPASS_BEARINGS],
                              "description": ("Which windows: 'street' (front), 'rear', 'side', 'court', a compass "
                                              "direction the windows face, or 'all' (default) if the user doesn't know.")},
                     "address": ADDRESS_ARG,
                 },
-                "required": ["floor"],
             },
         },
     },
@@ -1638,17 +1704,21 @@ TOOLS = [
         "function": {
             "name": "night_walk_check",
             "description": (
-                "How does the walk home from the subway look at night in the records? Finds the nearest station "
-                "(or a named one), estimates the walk, and counts reported street incidents (robbery, felony "
-                "assault, sex crimes, theft from a person, shootings) along that route at night over the latest "
-                "12 months of NYPD data, where on the route they happened, and how that compares with similar "
-                "walks from other stations. Use for 'is the walk home safe', 'walk from the subway at night'."),
+                "Is the area safe at night / how's the walk home from the subway? Picks a subway station (the "
+                "nearest by default, the nearest on a given line, or a named one near the building), estimates the "
+                "walk, and counts reported street incidents (robbery, felony assault, sex crimes, theft from a "
+                "person, shootings) along that route at night over the latest 12 months of NYPD data, where on the "
+                "route they happened, and how that compares with similar walks from other stations. For several "
+                "lines, call it once per line in the same turn."),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "address": ADDRESS_ARG,
+                    "line": {"type": "string",
+                             "description": "A subway line, e.g. '2', 'C', 'Q': uses the nearest station on that line. Prefer this when the user names a train."},
                     "station": {"type": "string",
-                                "description": "Station name if the user names one, e.g. '96 St'. Omit for the nearest."},
+                                "description": ("A station name the user gave, e.g. '96 St'. Only stations within ~1.2 miles of "
+                                                "the building are considered; an unclear name returns the candidates. Omit for the nearest.")},
                     "after_hour": {"type": "integer", "minimum": 21, "maximum": 23,
                                    "description": "Start of the night window on a 24-hour clock (window ends 5am). Default 21 (9pm)."},
                 },

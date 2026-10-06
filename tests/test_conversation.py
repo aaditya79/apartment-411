@@ -141,4 +141,39 @@ print("\n=== lease: pasted in chat")
 s = chat(SAMPLE.read_text() + "\n\nCan you check this lease?", None, "lease: pasted")
 check("review_lease" in tools_used(s), "a pasted lease should be reviewed")
 
+# --- Follow-ups use the building in session state: tools called with no address ---
+print("\n=== state follow-ups")
+first = chat("Look up 2053 Frederick Douglass Blvd, Manhattan", None, "state: lookup")
+sid, already = first["session_id"], set(tools_used(first))
+for question, tool in [("is the area safe", "night_walk_check"), ("how much sun", "estimate_sunlight"),
+                       ("any pests", "check_pests")]:
+    s = chat(question, sid, f"state: {question}")
+    calls = [c for c in s["tool_calls"] if c["name"] == tool]
+    # Either the tool runs now, without an address, or its result is already in this conversation.
+    check(bool(calls) or tool in already, f"'{question}' should call {tool} or reuse it (called {tools_used(s)})")
+    check(all("address" not in c["args"] for c in calls), f"'{question}': {tool} should be called without an address")
+    check("street address" not in s["response"].lower(), f"'{question}' must not ask for the address again")
+    already |= set(tools_used(s))
+
+# --- Night walk by subway line: one call per line, no duplicate stations, a real answer ---
+print("\n=== night walk by line")
+s = chat("2053 Frederick Douglass Blvd, tell me about the night walk from the closest 2 stop, 1 stop and C stop.",
+         None, "night walk: 2, 1 and C")
+walks = [c for c in s["tool_calls"] if c["name"] == "night_walk_check"]
+ok_walks = [json.loads(c["result"]) for c in walks if "error" not in json.loads(c["result"])]
+stations = [(w["station"]["name"], tuple(w["station"]["lines"])) for w in ok_walks if not w.get("duplicate")]
+lines_asked = sorted(str(c["args"].get("line", "")).strip().upper() for c in walks)
+check(len(walks) <= 4, f"expected about one night_walk_check per line, got {len(walks)}: {[c['args'] for c in walks]}")
+check({"1", "2", "C"} <= set(lines_asked), f"should ask by line 2, 1 and C; asked {lines_asked}")
+check(len(stations) == len(set(stations)) == 3, f"three distinct stations expected, got {stations}")
+check("tool-call limit" not in s["response"], "must finish with an answer, not the tool-call limit")
+
+# --- Red flags only when worse than the area ---
+print("\n=== red-flag rule")
+s = chat("I'm thinking of renting at 2053 Frederick Douglass Blvd in Manhattan. Should I worry about anything?",
+         None, "red flags vs area")
+text = s["response"]
+red = text.split("Red flags", 1)[-1].split("Green flags", 1)[0].lower() if "Red flags" in text else ""
+check("heat" not in red, "heat (3.3 per 100 apts vs ~96 nearby) must not be listed as a red flag")
+
 print("\n" + ("ALL CHECKS PASSED" if not problems else f"{len(problems)} PROBLEMS:\n- " + "\n- ".join(problems)))
