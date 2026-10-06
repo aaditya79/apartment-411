@@ -72,7 +72,7 @@ def test_clear_gives_a_new_session():
     browser = TestClient(server.app)
     sid = post_chat(browser, "hello")["session_id"]
     fresh = browser.post("/clear", params={"session_id": sid}).json()["session_id"]
-    assert fresh != sid and sid not in server.sessions
+    assert fresh != sid and sid in server.sessions  # the old chat stays resumable by its ID
     assert post_chat(browser, "new chat")["session_id"] == fresh
 
 
@@ -165,6 +165,63 @@ def test_upload_formats_and_sizes():
     real = text_to_pdf(lease_text, "", "", padding_bytes=12 * MB)  # a big PDF that does have text
     r = upload("lease.pdf", real, "application/pdf")
     assert r.status_code == 200 and r.json()["is_sample"], r.text
+
+
+def iap(email: str) -> dict:
+    """The header IAP adds on Cloud Run."""
+    return {"x-goog-authenticated-user-email": f"accounts.google.com:{email}"}
+
+
+def test_resume_by_id_same_visitor_only():
+    owner = TestClient(server.app, headers=iap("ab1234@columbia.edu"))
+    sid = post_chat(owner, "Look up 155 East 92nd Street, Manhattan")["session_id"]
+    post_chat(owner, "and the walk home?", sid)
+    owner.post("/upload", files={"file": ("lease.txt", SAMPLE.read_bytes(), "text/plain")}, data={"session_id": sid})
+
+    # Same Columbia account, different browser (no cookies): resumes, with turns and the lease.
+    other_browser = TestClient(server.app, headers=iap("AB1234@columbia.edu"))
+    r = other_browser.get("/session", params={"session_id": sid})
+    assert r.status_code == 200, r.text
+    view = r.json()
+    assert view["session_id"] == sid and len(view["turns"]) == 2 and view["lease"]["attached"], view
+    assert view["turns"][0]["user"].startswith("Look up 155 East 92nd")
+    assert other_browser.cookies.get(server.SESSION_COOKIE) == sid  # and later turns continue it
+    assert post_chat(other_browser, "anything else?")["session_id"] == sid
+
+    before = len(server.sessions)
+    for client, sid_try in [(TestClient(server.app, headers=iap("xy9876@columbia.edu")), sid),  # another user
+                            (TestClient(server.app), sid),                                      # local: other visitor
+                            (other_browser, str(uuid.uuid4())), (other_browser, "made-up")]:      # forged IDs
+        r = client.get("/session", params={"session_id": sid_try})
+        assert r.status_code == 404 and r.json()["error"] == "No session found with that ID.", r.text
+    assert len(server.sessions) == before, "a refused resume must not create a session"
+
+    # Another visitor can't continue it through /chat either: they get their own fresh session.
+    stranger = TestClient(server.app, headers=iap("xy9876@columbia.edu"))
+    assert post_chat(stranger, "hi", sid)["session_id"] != sid
+
+
+def test_upload_never_sends_and_both_clears_drop_the_lease():
+    client = TestClient(server.app)
+    sid = post_chat(client, "hello")["session_id"]
+    turns, messages = len(server.sessions[sid]["turns"]), len(server.sessions[sid]["messages"])
+    r = client.post("/upload", files={"file": ("my lease.txt", SAMPLE.read_bytes(), "text/plain")}, data={"session_id": sid})
+    assert r.status_code == 200 and r.json()["name"] == "my lease.txt"
+    assert len(server.sessions[sid]["turns"]) == turns and len(server.sessions[sid]["messages"]) == messages, \
+        "an upload must not send a message"
+    assert client.get("/session").json()["lease"] == {"attached": True, "name": "my lease.txt"}
+
+    # The × on the chip.
+    assert client.post("/lease/clear", json={"session_id": sid}).json()["lease_attached"] is False
+    assert not server.sessions[sid]["state"].get("lease_text")
+    assert client.get("/session").json()["lease"]["attached"] is False
+
+    # New search.
+    client.post("/upload", files={"file": ("lease.txt", SAMPLE.read_bytes(), "text/plain")}, data={"session_id": sid})
+    fresh = client.post("/clear", params={"session_id": sid}).json()["session_id"]
+    assert not server.sessions[sid]["state"].get("lease_text"), "New search drops the old session's lease"
+    assert not server.sessions[fresh]["state"].get("lease_text")
+    assert client.get("/session").json()["lease"]["attached"] is False
 
 
 if __name__ == "__main__":

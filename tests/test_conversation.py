@@ -16,6 +16,10 @@ import requests
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 SAMPLE = Path(__file__).parent.parent / "data" / "sample_lease.txt"
 problems: list[str] = []
+# One client that keeps cookies, like a browser: sessions belong to the visitor who started them
+# (the IAP account when deployed, a visitor cookie locally), so a cookie-less client is a new visitor
+# on every request and can't continue its own sessions.
+BROWSER = requests.Session()
 
 
 def check(ok: bool, message: str) -> None:
@@ -24,7 +28,7 @@ def check(ok: bool, message: str) -> None:
         print(f"   !! {message}")
 
 
-def chat(message: str, session_id: str | None, label: str, http=requests) -> dict:
+def chat(message: str, session_id: str | None, label: str, http=BROWSER) -> dict:
     started = time.time()
     r = http.post(f"{BASE}/chat", json={"message": message, "session_id": session_id}, timeout=300)
     elapsed = time.time() - started
@@ -42,12 +46,17 @@ def chat(message: str, session_id: str | None, label: str, http=requests) -> dic
     return body
 
 
+def fresh() -> str:
+    """New search: a new session for this browser (with a kept cookie, no session_id would just continue)."""
+    return BROWSER.post(f"{BASE}/clear", timeout=30).json()["session_id"]
+
+
 def tools_used(body: dict) -> list[str]:
     return [c["name"] for c in body["tool_calls"]]
 
 
 # --- Session 1: the README queries and follow-ups ---
-s1 = chat("I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?", None, "1 README q1")
+s1 = chat("I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?", fresh(), "1 README q1")
 sid1 = s1["session_id"]
 check("look_up_building" in tools_used(s1), "q1 should look up the building")
 check({"check_maintenance_record", "get_landlord_portfolio"} <= set(tools_used(s1)), "q1 should run the report tools")
@@ -76,14 +85,14 @@ check(not any(w in s["response"].lower() for w in ("blocks from", "few blocks", 
       "7 must not make up commute distances or times")
 
 # --- Session 2: a fresh comparison; session 1 must be untouched ---
-s2 = chat("Compare 155 East 92nd Street and 2053 Frederick Douglass Blvd, both in Manhattan", None, "8 new session: compare")
+s2 = chat("Compare 155 East 92nd Street and 2053 Frederick Douglass Blvd, both in Manhattan", fresh(), "8 new session: compare")
 check(s2["session_id"] != sid1, "8 should get a new session")
 s = chat("What building were we talking about, and what did the sun check say?", sid1, "8b session 1 still intact")
 check(s["session_id"] == sid1, "8b should resume session 1")
 check("Frederick Douglass" not in s["response"], "8b: session 1 must not know about session 2's building")
 
 # --- Session 3: a fake address ---
-s3 = chat("What about 123 Fake Street?", None, "9 new session: fake address")
+s3 = chat("What about 123 Fake Street?", fresh(), "9 new session: fake address")
 check("look_up_building" in tools_used(s3), "9 should try the lookup")
 check(s3["session_id"] not in (sid1, s2["session_id"]), "9 should be a new session")
 
@@ -111,7 +120,7 @@ check(again["session_id"] == first["session_id"], "the cookie should resume the 
 
 # --- Leases ---
 print("\n=== lease: sample loader")
-sid = requests.post(f"{BASE}/sample-lease", json={}, timeout=30).json()["session_id"]
+sid = BROWSER.post(f"{BASE}/sample-lease", json={"session_id": fresh()}, timeout=30).json()["session_id"]
 s = chat("Review my lease", sid, "lease: sample")
 check("review_lease" in tools_used(s), "should call review_lease")
 
@@ -123,7 +132,8 @@ check(r.status_code == 200 and r.json()["is_sample"], "txt upload")
 print("\n=== lease: PDF upload")
 from tests.make_pdf import text_to_pdf  # noqa: E402
 pdf = text_to_pdf(SAMPLE.read_text(), "[FICTIONAL SAMPLE — not a real lease]", "[FICTIONAL SAMPLE — not a real lease]")
-r = requests.post(f"{BASE}/upload", files={"file": ("lease.pdf", pdf, "application/pdf")}, timeout=60)
+r = BROWSER.post(f"{BASE}/upload", files={"file": ("lease.pdf", pdf, "application/pdf")},
+                 data={"session_id": fresh()}, timeout=60)
 print("  ", r.status_code, r.json())
 check(r.status_code == 200 and r.json()["is_sample"], "pdf upload")
 s = chat("Review my lease, money terms only", r.json()["session_id"], "lease: uploaded PDF")
@@ -138,12 +148,12 @@ for name, data, ctype, want in [("scan.pdf", b"%PDF-1.4 not really", "applicatio
     check(r.status_code == want, f"{name} should be {want}, got {r.status_code}")
 
 print("\n=== lease: pasted in chat")
-s = chat(SAMPLE.read_text() + "\n\nCan you check this lease?", None, "lease: pasted")
+s = chat(SAMPLE.read_text() + "\n\nCan you check this lease?", fresh(), "lease: pasted")
 check("review_lease" in tools_used(s), "a pasted lease should be reviewed")
 
 # --- Follow-ups use the building in session state: tools called with no address ---
 print("\n=== state follow-ups")
-first = chat("Look up 2053 Frederick Douglass Blvd, Manhattan", None, "state: lookup")
+first = chat("Look up 2053 Frederick Douglass Blvd, Manhattan", fresh(), "state: lookup")
 sid, already = first["session_id"], set(tools_used(first))
 for question, tool in [("is the area safe", "night_walk_check"), ("how much sun", "estimate_sunlight"),
                        ("any pests", "check_pests")]:
@@ -158,7 +168,7 @@ for question, tool in [("is the area safe", "night_walk_check"), ("how much sun"
 # --- Night walk by subway line: one call per line, no duplicate stations, a real answer ---
 print("\n=== night walk by line")
 s = chat("2053 Frederick Douglass Blvd, tell me about the night walk from the closest 2 stop, 1 stop and C stop.",
-         None, "night walk: 2, 1 and C")
+         fresh(), "night walk: 2, 1 and C")
 walks = [c for c in s["tool_calls"] if c["name"] == "night_walk_check"]
 ok_walks = [json.loads(c["result"]) for c in walks if "error" not in json.loads(c["result"])]
 stations = [(w["station"]["name"], tuple(w["station"]["lines"])) for w in ok_walks if not w.get("duplicate")]
@@ -171,14 +181,14 @@ check("tool-call limit" not in s["response"], "must finish with an answer, not t
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")
 s = chat("I'm thinking of renting at 2053 Frederick Douglass Blvd in Manhattan. Should I worry about anything?",
-         None, "red flags vs area")
+         fresh(), "red flags vs area")
 text = s["response"]
 red = text.split("Red flags", 1)[-1].split("Green flags", 1)[0].lower() if "Red flags" in text else ""
 check("heat" not in red, "heat (3.3 per 100 apts vs ~96 nearby) must not be listed as a red flag")
 
 # --- A new address in the message: nothing may answer about the previous building ---
 print("\n=== new address switches building")
-first = chat("Look up 350 5th Avenue, Manhattan", None, "switch: building A")
+first = chat("Look up 350 5th Avenue, Manhattan", fresh(), "switch: building A")
 sid = first["session_id"]
 a_label = next(json.loads(c["result"]).get("address") for c in first["tool_calls"] if c["name"] == "look_up_building")
 s = chat("2053 Frederick Douglass Blvd, Manhattan", sid, "switch: only building B's address")

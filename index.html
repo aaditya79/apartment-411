@@ -106,7 +106,16 @@ details.call[open] > summary::before { content: "−"; }
 
 /* ---- Composer ---- */
 .composer { border-top: 2px solid var(--ink); padding: 10px 14px 12px; background: var(--paper); }
-.attach-chip { display: none; margin-bottom: 6px; font: 12px var(--mono); background: var(--accent); border: 1px solid var(--ink); padding: 2px 8px; border-radius: 2px; width: fit-content; }
+.attach-chip { display: none; align-items: center; gap: 8px; margin-bottom: 6px; font: 12px var(--mono); background: var(--accent); border: 1px solid var(--ink); padding: 2px 4px 2px 8px; border-radius: 2px; width: fit-content; max-width: 100%; }
+.attach-chip.error { background: #f6dcd8; }
+.attach-chip .chip-x { border: 0; background: var(--ink); color: var(--paper); width: 20px; height: 20px; line-height: 20px; border-radius: 2px; font: 600 14px var(--mono); flex: none; }
+.attach-chip .chip-x:hover { background: var(--bad); }
+.resume { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.resume label { width: 100%; color: var(--ink-2); }
+.resume input { flex: 1; min-width: 200px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 2px; font: 12.5px var(--mono); background: var(--card); }
+.resume input:focus { outline: 2px solid var(--accent); border-color: var(--ink); }
+.resume .msg-err { width: 100%; color: var(--bad); font-size: 12.5px; }
+#session-label { cursor: pointer; }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
 .composer textarea { flex: 1; resize: none; min-height: 42px; max-height: 160px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 2px; font: 15px/1.4 var(--sans); background: var(--card); }
 .composer textarea:focus { outline: 3px solid var(--accent); outline-offset: 0; }
@@ -180,8 +189,8 @@ svg text { font-family: var(--mono); }
   <button class="logo" id="home" title="New search">Apartment <span class="num">411</span></button>
   <div class="tag">City records on any NYC rental, before you sign.</div>
   <div class="session" id="session" hidden>
-    <span id="session-label">Session —</span>
-    <button id="copy-session" title="Copy the full session ID">Copy</button>
+    <span id="session-label" title="Click to copy the full session ID">Session —</span>
+    <button id="copy-session" title="Copy the full session ID, to continue this chat in another browser">Copy ID</button>
     <button id="new-search">New search</button>
   </div>
 </header>
@@ -209,6 +218,13 @@ svg text { font-family: var(--mono); }
         <div class="examples-title">Try one</div>
         <div class="examples" id="examples"></div>
         <p class="story">Why this exists: I ran it on my own building. It found smoke and carbon-monoxide detector violations open since March 2020, failed rat inspections, and a landlord with 15 other buildings, some far worse. It also told me my street-side windows only get afternoon sun. The "morning sun" I thought I had was light reflected off the buildings across the street.</p>
+        <form class="resume" id="resume-form">
+          <label for="resume-id">Have a session ID? Paste it to continue a previous chat.</label>
+          <input id="resume-id" placeholder="e.g. 3f2a9c1e-…" autocomplete="off" spellcheck="false" />
+          <button class="btn-ghost" type="submit">Continue</button>
+          <div class="msg-err" id="resume-error" hidden></div>
+        </form>
+        <p class="fineprint">Sessions live in the server's memory: they last until the app restarts.</p>
         <p class="fineprint">Data: NYC Open Data (HPD, Health Dept., NYPD, DOB footprints), the city's GeoSearch geocoder, MTA stations and OpenStreetMap. Full records exist for HPD-registered rentals with 3+ apartments. Records can lag and "open" doesn't always mean unfixed. Not legal advice.</p>
       </div>
       <div id="messages" aria-live="polite"></div>
@@ -293,10 +309,12 @@ function setSession(id) {
   $("session-label").textContent = "Session " + id.slice(0, 8) + "…";
   $("session-label").title = id;
 }
-$("copy-session").onclick = async () => {
+async function copySessionId() {
   try { await navigator.clipboard.writeText(sessionId); $("copy-session").textContent = "Copied"; } catch { $("copy-session").textContent = "Copy failed"; }
-  setTimeout(() => ($("copy-session").textContent = "Copy"), 1500);
-};
+  setTimeout(() => ($("copy-session").textContent = "Copy ID"), 1500);
+}
+$("copy-session").onclick = copySessionId;
+$("session-label").onclick = copySessionId;
 async function newSearch() {
   if (busy) return;
   const r = await fetch("/clear" + (sessionId ? "?session_id=" + encodeURIComponent(sessionId) : ""), { method: "POST" });
@@ -306,6 +324,7 @@ async function newSearch() {
   $("first-load").hidden = false;
   for (const k of Object.keys(files)) delete files[k];
   fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
+  showLease(null);  // the old session (and its lease) is gone
   renderPanel();
   setSession(body.session_id);
   $("input").focus();
@@ -388,7 +407,9 @@ function setBusy(on) {
 
 async function send(message) {
   message = message.trim();
+  if (!message && leaseAttached && !leaseReviewed) message = "Review my lease";  // "press send to review"
   if (!message || busy) return;
+  if (leaseAttached) { leaseReviewed = true; input.placeholder = DEFAULT_PLACEHOLDER; }
   $("start").hidden = true;
   $("first-load").hidden = true;
   addUser(message);
@@ -424,18 +445,38 @@ $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(input
 
 // ---------- Leases ----------
 $("attach").onclick = () => $("file").click();
+// Lease chip: attaching never sends anything; your draft stays as it is.
+const DEFAULT_PLACEHOLDER = input.placeholder;
+let leaseAttached = false, leaseReviewed = false;
+function showLease(name, error) {
+  const chip = $("attach-chip");
+  leaseAttached = Boolean(name) && !error;
+  chip.classList.toggle("error", Boolean(error));
+  if (!name && !error) { chip.style.display = "none"; chip.innerHTML = ""; input.placeholder = DEFAULT_PLACEHOLDER; return; }
+  chip.style.display = "flex";
+  chip.innerHTML = error ? `<span>⚠ ${esc(error)}</span><button type="button" class="chip-x" aria-label="Dismiss">×</button>`
+    : `<span>📎 Lease attached: ${esc(name)}</span><button type="button" class="chip-x" title="Remove the lease" aria-label="Remove the lease">×</button>`;
+  chip.querySelector(".chip-x").onclick = error ? () => showLease(null) : removeLease;
+  if (leaseAttached && !input.value.trim()) input.placeholder = "Lease attached. Ask me anything about it, or press send to review.";
+}
+async function removeLease() {
+  await fetch("/lease/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) }).catch(() => {});
+  leaseResult = null; renderPanel();
+  showLease(null);
+  input.focus();
+}
 $("file").onchange = async () => {
   const f = $("file").files[0];
   $("file").value = "";
   if (!f) return;
-  const chip = $("attach-chip");
-  chip.style.display = "block";
   const MAX = 20 * 1024 * 1024;  // keep in step with lease.MAX_UPLOAD_BYTES
   if (f.size > MAX) {  // say so before uploading 30 MB for nothing
-    chip.textContent = `⚠ That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 20.0 MB. Upload a smaller copy or paste the lease text.`;
+    showLease(null, `That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 20.0 MB. Upload a smaller copy or paste the lease text.`);
     return;
   }
-  chip.textContent = "Uploading " + f.name + "…";
+  const chip = $("attach-chip");
+  chip.style.display = "flex"; chip.classList.remove("error");
+  chip.innerHTML = `<span>Uploading ${esc(f.name)}…</span>`;
   const form = new FormData();
   form.append("file", f);
   if (sessionId) form.append("session_id", sessionId);
@@ -443,11 +484,12 @@ $("file").onchange = async () => {
     const r = await fetch("/upload", { method: "POST", body: form });
     const body = await r.json().catch(() => ({ error: `Upload failed (HTTP ${r.status}).` }));
     setSession(body.session_id);
-    if (!r.ok) { chip.textContent = "⚠ " + (body.error || "Upload failed"); return; }
-    chip.textContent = `📎 Lease attached: ${f.name} (${fmt(body.characters, 0)} characters)`;
-    send("Review my lease");
+    if (!r.ok) { showLease(null, body.error || "Upload failed"); return; }
+    leaseReviewed = false;
+    showLease(body.name || f.name);
+    input.focus();  // nothing is sent: the user decides what to ask
   } catch (e) {
-    chip.textContent = "⚠ Upload failed: " + e.message;
+    showLease(null, "Upload failed: " + e.message);
   }
 };
 async function trySampleLease() {
@@ -455,10 +497,9 @@ async function trySampleLease() {
   const r = await fetch("/sample-lease", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) });
   const body = await r.json();
   setSession(body.session_id);
-  const chip = $("attach-chip");
-  chip.style.display = "block";
-  chip.textContent = "📎 Lease attached: fictional sample lease (155 East 92nd Street, Apt 4B)";
-  send("Review my lease");
+  leaseReviewed = false;
+  showLease(body.name || "fictional sample lease");
+  send("Review my lease");  // the example button is a question: "review the sample lease"
 }
 
 // ---------- Building file ----------
@@ -742,18 +783,43 @@ function renderMap(f) {
 $("examples").innerHTML = EXAMPLES.map((e, i) => `<button class="example${e.lease ? " lease" : ""}" data-i="${i}"><span class="k">${esc(e.k)}</span>${esc(e.lease ? "Try a sample lease (fictional, for 155 East 92nd Street Apt 4B)" : e.text)}</button>`).join("");
 $("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => { const e = EXAMPLES[b.dataset.i]; e.lease ? trySampleLease() : send(e.text); }));
 
-// Resume after a refresh: the server knows the session from its cookie.
+// ---------- Resume ----------
+function restore(view) {
+  $("messages").innerHTML = "";
+  for (const k of Object.keys(files)) delete files[k];
+  fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
+  setSession(view.session_id);
+  const turns = view.turns || [];
+  $("start").hidden = turns.length > 0;
+  $("first-load").hidden = turns.length > 0;
+  for (const t of turns) { addUser(t.user); addBot(t.assistant, t.tool_calls); absorb(t.tool_calls); }
+  renderPanel();
+  leaseReviewed = true;
+  showLease(view.lease?.attached ? (view.lease.name || "lease") : null);
+}
+async function resumeById(id) {
+  const err = $("resume-error");
+  err.hidden = true;
+  const r = await fetch("/session?session_id=" + encodeURIComponent(id.trim()));
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) { err.textContent = body.error || "No session found with that ID."; err.hidden = false; return false; }
+  restore(body);
+  return true;
+}
+$("resume-form").addEventListener("submit", (e) => { e.preventDefault(); if ($("resume-id").value.trim()) resumeById($("resume-id").value); });
+
 (async () => {
   try {
-    const r = await (await fetch("/session")).json();
-    if (!r.session_id) return;
-    setSession(r.session_id);
-    if (r.history?.length) {
-      $("start").hidden = true;
-      $("first-load").hidden = true;
-      for (const m of r.history) m.role === "user" ? addUser(m.content) : addBot(m.content, []);
-      absorb(r.tool_calls || []);
+    // ?session=<id> in the URL, else the cookie's session (a page refresh).
+    const wanted = new URLSearchParams(location.search).get("session");
+    if (wanted) {
+      history.replaceState(null, "", location.pathname);  // don't leave the ID in the address bar
+      if (await resumeById(wanted)) return;
+      $("resume-id").value = wanted;
+      return;
     }
+    const view = await (await fetch("/session")).json();
+    if (view.session_id) restore(view);
   } catch { /* first visit */ }
 })();
 input.focus();

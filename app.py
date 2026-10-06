@@ -7,7 +7,7 @@ from pathlib import Path
 
 import litellm
 import uvicorn
-from fastapi import Cookie, FastAPI, File, Form, Response, UploadFile
+from fastapi import Cookie, FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -200,27 +200,36 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
 sessions: dict[str, dict] = {}
 sessions_lock = threading.Lock()
 SESSION_COOKIE = "a411_session"
+VISITOR_COOKIE = "a411_visitor"
+IAP_EMAIL_HEADER = "x-goog-authenticated-user-email"  # set by IAP on Cloud Run: "accounts.google.com:you@columbia.edu"
+NO_SESSION = "No session found with that ID."
 
 
-def new_session() -> str:
+def new_session(visitor: str) -> str:
     session_id = str(uuid.uuid4())
     with sessions_lock:
         sessions[session_id] = {
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}],
             "state": {"current_bbl": None, "buildings": {}, "lease_text": None},
+            "turns": [],          # what the page needs to redraw a resumed chat
+            "visitor": visitor,   # sessions belong to whoever started them
             "created": time.time(),
             "lock": threading.Lock(),  # one turn at a time per session
         }
     return session_id
 
 
-def get_session(session_id: str | None) -> str:
-    """The session to use. Only IDs this server issued are accepted: an unknown or made-up
-    ID gets a fresh session, so two clients can never share one by picking the same string."""
+def owned_session(session_id: str | None, visitor: str) -> dict | None:
+    """A session this server issued to this visitor, or None. Someone else's ID counts as unknown."""
     with sessions_lock:
-        if session_id in sessions:
-            return session_id
-    return new_session()
+        session = sessions.get(session_id)
+    return session if session and session["visitor"] == visitor else None
+
+
+def get_session(session_id: str | None, visitor: str) -> str:
+    """The session to use. Only IDs this server issued, to this visitor, are accepted: anything else
+    gets a fresh session, so two clients can never share one by picking (or copying) the same string."""
+    return session_id if owned_session(session_id, visitor) else new_session(visitor)
 
 
 def with_cookie(response: Response, session_id: str) -> None:
@@ -231,6 +240,25 @@ def with_cookie(response: Response, session_id: str) -> None:
 # --- FastAPI App ---
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def identify_visitor(request: Request, call_next):
+    """Who is asking: the Columbia account IAP signed in when deployed, else a random cookie locally.
+    IAP sets its header itself and every request passes through IAP, so a browser can't fake it."""
+    email = request.headers.get(IAP_EMAIL_HEADER)
+    cookie = request.cookies.get(VISITOR_COOKIE)
+    fresh_cookie = None
+    if email:
+        request.state.visitor = "iap:" + email.split(":")[-1].strip().lower()
+    else:
+        if not cookie:
+            cookie = fresh_cookie = str(uuid.uuid4())
+        request.state.visitor = "cookie:" + cookie
+    response = await call_next(request)
+    if fresh_cookie:
+        response.set_cookie(VISITOR_COOKIE, fresh_cookie, max_age=180 * 24 * 3600, samesite="lax", httponly=True)
+    return response
 
 
 class ChatRequest(BaseModel):
@@ -250,9 +278,9 @@ def index():
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, response: Response, a411_session: str | None = Cookie(default=None)):
+def chat(request: ChatRequest, response: Response, http: Request, a411_session: str | None = Cookie(default=None)):
     # Get or create the session (the body's ID wins; the cookie resumes after a refresh)
-    session_id = get_session(request.session_id or a411_session)
+    session_id = get_session(request.session_id or a411_session, http.state.visitor)
     session = sessions[session_id]
     with_cookie(response, session_id)
 
@@ -264,6 +292,7 @@ def chat(request: ChatRequest, response: Response, a411_session: str | None = Co
         pasted_lease = lease.looks_like_lease(request.message)
         if pasted_lease and (not state.get("lease_text") or len(request.message) >= 1500):
             state["lease_text"] = request.message
+            state["lease_name"] = "pasted lease text"
             state["lease_attached_note"] = True
         if not pasted_lease:
             # A new address in the message becomes the building before any tool runs.
@@ -283,18 +312,17 @@ def chat(request: ChatRequest, response: Response, a411_session: str | None = Co
         except Exception as e:
             # Auth, billing, a model that is not running: show it in the chat, not as a 500.
             answer, tool_calls = f"Model call failed: {type(e).__name__}: {str(e)[:300]}", []
-        session.setdefault("all_tool_calls", []).extend(tool_calls)
-        session["last_tool_calls"] = session["all_tool_calls"]  # lets a refreshed page redraw its panel
+        session["turns"].append({"user": request.message, "assistant": answer or "", "tool_calls": tool_calls})
 
     return ChatResponse(response=answer or "", session_id=session_id, tool_calls=tool_calls)
 
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...), session_id: str | None = Form(default=None),
+async def upload(http: Request, file: UploadFile = File(...), session_id: str | None = Form(default=None),
                  a411_session: str | None = Cookie(default=None)):
     """Attach a lease (PDF, .docx or .txt, up to 20 MB) to the session for review_lease. The text stays
-    in memory for this session only and is never logged."""
-    session_id = get_session(session_id or a411_session)
+    in memory for this session only and is never logged. Attaching never sends a chat message."""
+    session_id = get_session(session_id or a411_session, http.state.visitor)
 
     def reply(status: int, body: dict) -> JSONResponse:
         resp = JSONResponse(status_code=status, content={"session_id": session_id, **body})
@@ -325,9 +353,10 @@ async def upload(file: UploadFile = File(...), session_id: str | None = Form(def
     if len(text.strip()) < 200:
         return reply(422, {"error": "That file has almost no text. Paste the lease text instead."})
 
-    sessions[session_id]["state"]["lease_text"] = text
-    sessions[session_id]["state"]["lease_attached_note"] = True
-    return reply(200, {"status": "ok", "characters": len(text), "is_sample": lease.is_sample(text)})
+    state = sessions[session_id]["state"]
+    state["lease_text"], state["lease_name"], state["lease_attached_note"] = text, file.filename or "lease", True
+    return reply(200, {"status": "ok", "characters": len(text), "is_sample": lease.is_sample(text),
+                       "name": state["lease_name"]})
 
 
 class SessionRequest(BaseModel):
@@ -335,41 +364,67 @@ class SessionRequest(BaseModel):
 
 
 @app.post("/sample-lease")
-def sample_lease(request: SessionRequest, response: Response, a411_session: str | None = Cookie(default=None)):
+def sample_lease(request: SessionRequest, response: Response, http: Request,
+                 a411_session: str | None = Cookie(default=None)):
     """Load the fictional sample lease into the session (for 'Try a sample lease')."""
-    session_id = get_session(request.session_id or a411_session)
-    sessions[session_id]["state"]["lease_text"] = (Path(__file__).parent / "data" / "sample_lease.txt").read_text()
-    sessions[session_id]["state"]["lease_attached_note"] = True
+    session_id = get_session(request.session_id or a411_session, http.state.visitor)
+    state = sessions[session_id]["state"]
+    state["lease_text"] = (Path(__file__).parent / "data" / "sample_lease.txt").read_text()
+    state["lease_name"], state["lease_attached_note"] = "fictional sample lease", True
     with_cookie(response, session_id)
-    return {"status": "ok", "session_id": session_id, "is_sample": True}
+    return {"status": "ok", "session_id": session_id, "is_sample": True, "name": state["lease_name"]}
+
+
+@app.post("/lease/clear")
+def clear_lease(request: SessionRequest, http: Request, a411_session: str | None = Cookie(default=None)):
+    """The × on the lease chip: detach the lease from this session."""
+    session = owned_session(request.session_id or a411_session, http.state.visitor)
+    if session:
+        for key in ("lease_text", "lease_name", "lease_attached_note"):
+            session["state"].pop(key, None)
+    return {"status": "ok", "lease_attached": False}
+
+
+def session_view(session_id: str, session: dict) -> dict:
+    turns = session["turns"]
+    return {
+        "session_id": session_id,
+        "turns": turns,
+        # Older shape, kept for the page and tests that read it.
+        "history": [m for t in turns for m in ({"role": "user", "content": t["user"]},
+                                               {"role": "assistant", "content": t["assistant"]})],
+        "tool_calls": [c for t in turns for c in t["tool_calls"]],
+        "lease": {"attached": bool(session["state"].get("lease_text")), "name": session["state"].get("lease_name")},
+    }
 
 
 @app.get("/session")
-def current_session(a411_session: str | None = Cookie(default=None)):
-    """For a page refresh: the cookie's session (if this server issued it) and its conversation so far."""
-    with sessions_lock:
-        session = sessions.get(a411_session)
+def current_session(response: Response, http: Request, session_id: str | None = None,
+                    a411_session: str | None = Cookie(default=None)):
+    """Resume a chat. With ?session_id= (pasted by the user): that session if it's theirs, else 404;
+    never a new empty one. Without it (a page refresh): the cookie's session, if any."""
+    if session_id is not None:
+        session = owned_session(session_id.strip(), http.state.visitor)
+        if not session:
+            return JSONResponse(status_code=404, content={"error": NO_SESSION})
+        with_cookie(response, session_id.strip())
+        return session_view(session_id.strip(), session)
+    session = owned_session(a411_session, http.state.visitor)
     if not session:
-        return {"session_id": None, "history": []}
-    history = []
-    for m in session["messages"]:
-        if m["role"] == "user":
-            history.append({"role": "user", "content": m["content"].split("]\n", 1)[-1]
-                            if m["content"].startswith("[Note from the app:") else m["content"]})
-        elif m["role"] == "tool":
-            continue
-        elif m["role"] == "assistant" and m.get("tool_calls"):
-            continue
-        elif m["role"] == "assistant":
-            history.append({"role": "assistant", "content": m.get("content") or ""})
-    return {"session_id": a411_session, "history": history, "tool_calls": session.get("last_tool_calls", [])}
+        return {"session_id": None, "turns": [], "history": [], "tool_calls": [], "lease": {"attached": False}}
+    return session_view(a411_session, session)
 
 
 @app.post("/clear")
-def clear(response: Response, session_id: str | None = None, a411_session: str | None = Cookie(default=None)):
-    with sessions_lock:
-        sessions.pop(session_id or a411_session, None)
-    fresh = new_session()
+def clear(response: Response, http: Request, session_id: str | None = None,
+          a411_session: str | None = Cookie(default=None)):
+    """New search: start a fresh session. The old conversation stays resumable by its ID, but its lease
+    is dropped: a lease never outlives the search it was attached to."""
+    old = owned_session(session_id or a411_session, http.state.visitor)
+    if old:
+        for key in ("lease_text", "lease_name", "lease_attached_note"):
+            old["state"].pop(key, None)
+    fresh = new_session(http.state.visitor)
     with_cookie(response, fresh)
     return {"status": "ok", "session_id": fresh}
 

@@ -93,7 +93,13 @@ index.html          the frontend (vanilla JS, Leaflet map, marked + DOMPurify)
 tests/              session, lease and end-to-end conversation tests
 ```
 
-**Sessions** are server-issued `uuid4`s. The server accepts only IDs it issued: a forged or unknown ID gets a new session, so two clients can never share one. A cookie resumes the session after a refresh, and the UI shows a short form of the ID.
+**Sessions** are server-issued `uuid4`s:
+- **Only issued IDs are accepted:** a forged or unknown ID gets a new session, so two clients can never share one.
+- **Refresh:** a cookie resumes the session after a page refresh.
+- **Resume by ID:** paste a session ID into the start screen, or open `?session=<id>`, to continue a chat in another browser. The messages, tool-call cards and building panel come back.
+- **Scoped to the visitor:** resuming only works for whoever started the session: the same Columbia account (from IAP's `X-Goog-Authenticated-User-Email` header) when deployed, or the same browser locally. Anyone else gets "No session found with that ID".
+- **New search:** starts a fresh session and drops the old session's attached lease.
+- **In memory:** sessions live in memory, so they're lost when Cloud Run restarts the instance.
 
 **The snapshot** (`data/snapshot.json.gz`, built 2026-10-05) holds citywide counts that are too slow to query live, for neighborhood comparisons and baselines:
 - open violations, complaints, heat complaints and rodent inspections per lot;
@@ -150,7 +156,7 @@ Data quirks I found and handle:
 - **No commute planning:** commute estimates were cut, and the agent says so instead of guessing.
 - **Lease review is a checklist, not legal advice.** It only checks rules I could verify on an official page.
 - **City data lag:** city records update daily at best; NYPD lags about 3 months; neighborhood comparisons use the snapshot (date above).
-- **Sessions live in memory** on one Cloud Run instance, so they're lost if the instance restarts.
+- **Sessions live in memory** on one Cloud Run instance, so they're lost if the instance restarts (including resuming by ID).
 
 ## Run it locally
 
@@ -172,7 +178,9 @@ export NYC_OPEN_DATA_APP_TOKEN=…  # optional: a free NYC Open Data app token a
 uv run python -m tools "155 East 92nd Street, Manhattan"   # every tool once, with timings
 uv run python -m tests.test_sessions                    # session rules (no model calls)
 uv run python -m tests.test_lease                       # the sample lease's planted issues
+uv run python -m tests.test_tools                       # harness and tool behavior (no model calls)
 uv run python -m tests.test_conversation                # end to end, against a running server
+uv run --with playwright python -m tests.test_ui        # lease chip and session resume in Chrome
 uv run build_snapshot.py                                # rebuild the citywide snapshot (~10 min)
 ```
 
