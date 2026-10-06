@@ -132,7 +132,7 @@ check("review_lease" in tools_used(s), "should review the uploaded PDF")
 print("\n=== lease: bad uploads")
 for name, data, ctype, want in [("scan.pdf", b"%PDF-1.4 not really", "application/pdf", 422),
                                 ("photo.png", b"\x89PNG....", "image/png", 415),
-                                ("big.txt", b"x" * (5 * 1024 * 1024 + 10), "text/plain", 413)]:
+                                ("big.txt", b"x" * (21 * 1024 * 1024), "text/plain", 413)]:
     r = requests.post(f"{BASE}/upload", files={"file": (name, data, ctype)}, timeout=60)
     print(f"   {name}: {r.status_code} {r.json().get('error')}")
     check(r.status_code == want, f"{name} should be {want}, got {r.status_code}")

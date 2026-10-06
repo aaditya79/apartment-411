@@ -12,7 +12,8 @@ def _escape(text: str) -> bytes:
     return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
 
 
-def text_to_pdf(text: str, header: str, footer: str) -> bytes:
+def text_to_pdf(text: str, header: str, footer: str, padding_bytes: int = 0) -> bytes:
+    """padding_bytes adds an unused binary stream, to make a large file (like a scan) for size tests."""
     lines = [wrapped for line in text.splitlines() for wrapped in (textwrap.wrap(line, 95) or [""])]
     pages = [lines[i:i + LINES_PER_PAGE] for i in range(0, len(lines), LINES_PER_PAGE)]
 
@@ -32,6 +33,9 @@ def text_to_pdf(text: str, header: str, footer: str) -> bytes:
         objects.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> "
                        b"/Contents %d 0 R >>" % content_id)
         page_ids.append(len(objects))
+    if padding_bytes:
+        import os
+        objects.append(b"<< /Length %d >>\nstream\n" % padding_bytes + os.urandom(padding_bytes) + b"\nendstream")
     objects[1] = b"<< /Type /Pages /Kids [" + b" ".join(b"%d 0 R" % i for i in page_ids) + b"] /Count %d >>" % len(page_ids)
 
     out, offsets = bytearray(b"%PDF-1.4\n"), []

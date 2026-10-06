@@ -217,12 +217,12 @@ svg text { font-family: var(--mono); }
     <form class="composer" id="composer">
       <div class="attach-chip" id="attach-chip"></div>
       <div class="composer-row">
-        <button type="button" class="icon-btn" id="attach" title="Attach a lease (PDF or .txt, up to 5 MB)" aria-label="Attach a lease">📎</button>
-        <input type="file" id="file" accept=".pdf,.txt,application/pdf,text/plain" hidden />
+        <button type="button" class="icon-btn" id="attach" title="Attach a lease (PDF, .docx or .txt, up to 20 MB)" aria-label="Attach a lease">📎</button>
+        <input type="file" id="file" accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
         <textarea id="input" rows="1" placeholder="An NYC address, a listing to fact-check, or a question…" aria-label="Message"></textarea>
         <button type="submit" class="send-btn" id="send">Ask</button>
       </div>
-      <div class="hint">Enter to send · Shift+Enter for a new line · 📎 attach a lease (PDF or .txt)</div>
+      <div class="hint">Enter to send · Shift+Enter for a new line · 📎 attach a lease (PDF, .docx or .txt, up to 20 MB)</div>
       <div class="hint first-load" id="first-load">First query may take up to a minute while city data loads.</div>
     </form>
   </section>
@@ -430,13 +430,18 @@ $("file").onchange = async () => {
   if (!f) return;
   const chip = $("attach-chip");
   chip.style.display = "block";
+  const MAX = 20 * 1024 * 1024;  // keep in step with lease.MAX_UPLOAD_BYTES
+  if (f.size > MAX) {  // say so before uploading 30 MB for nothing
+    chip.textContent = `⚠ That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 20.0 MB. Upload a smaller copy or paste the lease text.`;
+    return;
+  }
   chip.textContent = "Uploading " + f.name + "…";
   const form = new FormData();
   form.append("file", f);
   if (sessionId) form.append("session_id", sessionId);
   try {
     const r = await fetch("/upload", { method: "POST", body: form });
-    const body = await r.json();
+    const body = await r.json().catch(() => ({ error: `Upload failed (HTTP ${r.status}).` }));
     setSession(body.session_id);
     if (!r.ok) { chip.textContent = "⚠ " + (body.error || "Upload failed"); return; }
     chip.textContent = `📎 Lease attached: ${f.name} (${fmt(body.characters, 0)} characters)`;

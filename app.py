@@ -256,26 +256,34 @@ def chat(request: ChatRequest, response: Response, a411_session: str | None = Co
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), session_id: str | None = Form(default=None),
                  a411_session: str | None = Cookie(default=None)):
-    """Attach a lease (PDF or .txt, up to 5 MB) to the session for review_lease. The text stays in
-    memory for this session only and is never logged."""
+    """Attach a lease (PDF, .docx or .txt, up to 20 MB) to the session for review_lease. The text stays
+    in memory for this session only and is never logged."""
     session_id = get_session(session_id or a411_session)
-    data = await file.read(lease.MAX_UPLOAD_BYTES + 1)
 
     def reply(status: int, body: dict) -> JSONResponse:
         resp = JSONResponse(status_code=status, content={"session_id": session_id, **body})
         with_cookie(resp, session_id)
         return resp
 
-    if len(data) > lease.MAX_UPLOAD_BYTES:
-        return reply(413, {"error": "That file is over 5 MB. Upload a smaller PDF or paste the lease text."})
-    name = (file.filename or "").lower()
+    # FastAPI has already buffered the upload (spooled to a temp file), so check its size before
+    # reading anything, and hand the file object straight to the parsers: no extra copies.
+    size = file.size if file.size is not None else len(await file.read())
+    if size > lease.MAX_UPLOAD_BYTES:
+        return reply(413, {"error": f"That file is {lease.megabytes(size)}; the limit is "
+                                    f"{lease.megabytes(lease.MAX_UPLOAD_BYTES)}. Upload a smaller copy or paste the lease text."})
+    await file.seek(0)
+    head = await file.read(16)
+    await file.seek(0)
+    kind = lease.file_kind(head, file.filename or "")
     try:
-        if name.endswith(".pdf") or data[:5] == b"%PDF-":
-            text = lease.pdf_to_text(data)
-        elif name.endswith(".txt") or (file.content_type or "").startswith("text/"):
-            text = data.decode("utf-8", errors="replace")
+        if kind == "pdf":
+            text = lease.pdf_to_text(file.file)
+        elif kind == "docx":
+            text = lease.docx_to_text(file.file)
+        elif kind == "txt":
+            text = (await file.read()).decode("utf-8", errors="replace")
         else:
-            return reply(415, {"error": "Upload a PDF or a .txt file, or paste the lease text."})
+            return reply(415, {"error": lease.unsupported_message(kind)})
     except ValueError as e:
         return reply(422, {"error": str(e)})
     if len(text.strip()) < 200:

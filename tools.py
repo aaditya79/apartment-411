@@ -1198,7 +1198,7 @@ def review_lease(state: dict, focus: str = "all") -> dict:
     text = state.get("lease_text")
     if not text:
         raise ToolError("No lease has been shared in this conversation.",
-                        "Ask the user to upload the lease (PDF or .txt, paperclip button) or paste its text, or to "
+                        "Ask the user to upload the lease (PDF, .docx or .txt, paperclip button) or paste its text, or to "
                         "try the sample lease.")
     if focus not in LEASE_FOCUS:
         raise ToolError(f"Unknown focus '{focus}'.", "Use one of: all, money, terms, disclosures, city_records.")

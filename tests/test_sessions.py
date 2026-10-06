@@ -97,6 +97,58 @@ def test_pasted_lease_is_stored():
     assert "FICTIONAL SAMPLE" in server.sessions[sid]["state"]["lease_text"]
 
 
+def make_docx(text: str) -> bytes:
+    """A minimal real .docx: a zip with word/document.xml, one w:p per paragraph."""
+    import io
+    import zipfile
+    from xml.sax.saxutils import escape
+    body = "".join(f"<w:p><w:r><w:t xml:space=\"preserve\">{escape(p)}</w:t></w:r></w:p>"
+                   for p in text.split("\n\n"))
+    xml = ('<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+           f'wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
+def upload(name: str, data: bytes, ctype: str):
+    return TestClient(server.app).post("/upload", files={"file": (name, data, ctype)})
+
+
+def test_upload_formats_and_sizes():
+    from tests.make_pdf import text_to_pdf
+    lease_text = SAMPLE.read_text()
+    MB = 1024 * 1024
+
+    r = upload("lease.docx", make_docx(lease_text), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    assert r.status_code == 200 and r.json()["is_sample"], r.text
+    sid = r.json()["session_id"]
+    assert "Example Realty LLC" in server.sessions[sid]["state"]["lease_text"]
+
+    for name, data, ctype, says in [
+        ("lease.doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 2000, "application/msword", "old Word document (.doc)"),
+        ("lease.pages", b"PK\x03\x04" + b"\x00" * 2000, "application/x-iwork-pages-sffpages", "Apple Pages"),
+        ("lease.jpg", b"\xff\xd8\xff\xe0" + b"\x00" * 2000, "image/jpeg", "photo (JPEG)"),
+        ("IMG_0001.HEIC", b"\x00\x00\x00\x18ftypheic" + b"\x00" * 2000, "image/heic", "iPhone photo (HEIC)"),
+    ]:
+        r = upload(name, data, ctype)
+        assert r.status_code == 415 and says in r.json()["error"] and "PDF" in r.json()["error"], (name, r.text)
+
+    big = upload("big.txt", b"x" * (21 * MB), "text/plain")
+    assert big.status_code == 413 and big.json()["error"].startswith("That file is 21.0 MB; the limit is 20.0 MB"), big.text
+
+    scan = text_to_pdf("\n" * 120, "", "", padding_bytes=12 * MB)  # 3 empty pages, 12 MB: like a scan
+    assert len(scan) > 12 * MB
+    r = upload("scan.pdf", scan, "application/pdf")
+    assert r.status_code == 422 and "scan with no text layer" in r.json()["error"], r.text
+
+    real = text_to_pdf(lease_text, "", "", padding_bytes=12 * MB)  # a big PDF that does have text
+    r = upload("lease.pdf", real, "application/pdf")
+    assert r.status_code == 200 and r.json()["is_sample"], r.text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

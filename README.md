@@ -70,7 +70,7 @@ More detail on the original tools:
   - It reports a median plus an uncertainty range from 12 runs (floor height × window position × neighbors' heights ±10%), and names the building that blocks the sun most.
   - `floor="all"` sweeps every floor for winter sun.
 - **`fact_check_listing`** keeps billing terms ("heat included"), unit-level claims ("pristine") and brightness (which includes reflected light) apart from what building records can actually show, and states its rule in every evidence line.
-- **`review_lease`** works on PDF or text.
+- **`review_lease`** works on a PDF, a Word .docx or plain text (upload up to 20 MB, or paste it). Scanned PDFs without a text layer are detected and the user is asked to paste the text.
   - It extracts rent, deposit, dates and fees with deterministic rules, with no model call inside the tool.
   - It flags internal inconsistencies, terms likely not allowed under NY law, and missing disclosures, each quoting the clause and linking the official source.
   - It cross-checks the lease with city records: registered owner vs the landlord named, apartment floor vs building floors, bedbug filings, and violations in the unit.

@@ -17,7 +17,10 @@ from datetime import date, datetime
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+# Scanned leases are often 10-30 MB; Cloud Run's HTTP/1 request limit is 32 MiB, leaving room for the form.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_PDF_PAGES = 60          # a lease is rarely longer; caps time and memory on a 512 MiB instance
+ACCEPTED = "a PDF, a Word file (.docx) or a plain-text file (.txt)"
 logging.getLogger("pypdf").setLevel(logging.ERROR)  # never echo anything about a user's file to the logs
 SAMPLE_LABEL = "FICTIONAL SAMPLE — not a real lease"  # on every section of data/sample_lease.txt
 LIKELY_NOT_ALLOWED, CHECK, INCONSISTENT = "likely not allowed under NY law", "check with landlord", "inconsistent"
@@ -106,15 +109,89 @@ DATE = re.compile(r"\b(January|February|March|April|May|June|July|August|Septemb
                   r"\s+(\d{1,2}),?\s+(\d{4})\b|\b(\d{1,2})/(\d{1,2})/(\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b", re.IGNORECASE)
 
 
-def pdf_to_text(data: bytes) -> str:
-    """Text of a PDF. Raises ValueError with a user-facing message if there is none."""
+def megabytes(n: int) -> str:
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def file_kind(head: bytes, filename: str) -> str:
+    """What a file really is, from its first bytes (names lie), falling back to the extension."""
+    name = filename.lower()
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if head.startswith(b"PK\x03\x04"):  # a zip: .docx, .pages, .xlsx... all look alike here
+        return "docx" if name.endswith(".docx") else ("pages" if name.endswith(".pages") else "zip")
+    if head.startswith(b"\xd0\xcf\x11\xe0"):
+        return "doc"
+    if head.startswith(b"{\\rtf"):
+        return "rtf"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head.startswith(b"\x89PNG"):
+        return "png"
+    if head[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1", b"ftypheis"):
+        return "heic"
+    if head.startswith((b"GIF8", b"II*\x00", b"MM\x00*")):
+        return "image"
+    if name.endswith((".txt", ".text")) or b"\x00" not in head:
+        return "txt"
+    return name.rsplit(".", 1)[-1] if "." in name else "unknown"
+
+
+UNSUPPORTED = {
+    "doc": "an old Word document (.doc)",
+    "pages": "an Apple Pages document",
+    "rtf": "a Rich Text (.rtf) document",
+    "jpeg": "a photo (JPEG)", "png": "an image (PNG)", "heic": "an iPhone photo (HEIC)", "image": "an image",
+    "zip": "a zip archive",
+}
+
+
+def unsupported_message(kind: str) -> str:
+    what = UNSUPPORTED.get(kind, f"a .{kind} file" if kind != "unknown" else "a file type we can't read")
+    tip = " Save it as a PDF or .docx (File → Export), or paste the lease text." if kind in ("doc", "pages", "rtf") \
+        else " For a photo of a lease, paste the lease text instead." if kind in ("jpeg", "png", "heic", "image") \
+        else " Or paste the lease text."
+    return f"That's {what}. Upload {ACCEPTED}.{tip}"
+
+
+def pdf_to_text(file) -> str:
+    """Text of a PDF (a file object or bytes). Raises ValueError with a user-facing message.
+
+    Reads page by page and stops after MAX_PDF_PAGES. A scan has images but no text layer: if the
+    first pages yield no text, say so right away instead of walking a 30 MB file."""
     try:
-        reader = PdfReader(io.BytesIO(data))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except (PdfReadError, ValueError, KeyError) as e:
+        reader = PdfReader(io.BytesIO(file) if isinstance(file, bytes) else file)
+        parts = []
+        for i, page in enumerate(reader.pages):
+            if i >= MAX_PDF_PAGES:
+                break
+            parts.append(page.extract_text() or "")
+            if i == 2 and len("".join(parts).strip()) < 50:
+                break  # three pages without text: it's a scan
+        text = "\n".join(parts)
+    except (PdfReadError, ValueError, KeyError, OSError) as e:
         raise ValueError("That file couldn't be read as a PDF. Paste the lease text instead.") from e
     if len(text.strip()) < 200:
         raise ValueError("This PDF is a scan with no text layer. Paste the lease text instead.")
+    return text
+
+
+def docx_to_text(file) -> str:
+    """Text of a Word .docx (a file object or bytes), with no extra dependency: a .docx is a zip
+    whose word/document.xml holds paragraphs (w:p) made of text runs (w:t)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    try:
+        with zipfile.ZipFile(io.BytesIO(file) if isinstance(file, bytes) else file) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError) as e:
+        raise ValueError("That file couldn't be read as a Word document. Save it as a PDF or paste the text.") from e
+    paragraphs = ["".join(t.text or "" for t in p.iter(f"{ns}t")) for p in root.iter(f"{ns}p")]
+    text = "\n\n".join(p for p in paragraphs if p.strip())
+    if len(text.strip()) < 200:
+        raise ValueError("That Word document has almost no text. Paste the lease text instead.")
     return text
 
 
