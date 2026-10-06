@@ -160,9 +160,10 @@ class AddressError(DataSourceError):
 
 # --- HTTP with a one-hour cache ---
 
-# Keyed by (url, sorted params). The city's data updates daily at best, so an
-# hour-old answer is still accurate, and follow-up questions in a chat are instant.
-_cache: TTLCache = TTLCache(maxsize=4096, ttl=3600)
+# Keyed by (url, sorted params). The city's data updates daily at best, so a few
+# hours old is still accurate, and Socrata's uncached queries took 5-60s in testing.
+CACHE_SECONDS = 6 * 3600
+_cache: TTLCache = TTLCache(maxsize=8192, ttl=CACHE_SECONDS)
 _cache_lock = threading.Lock()  # FastAPI runs sync endpoints in a thread pool
 
 
@@ -171,7 +172,7 @@ def _app_token_headers() -> dict:
     return {"X-App-Token": token} if token else {}
 
 
-def soda(dataset: str, timeout: int = 25, attempts: int = 3, base: str = SODA, **params) -> list[dict]:
+def soda(dataset: str, timeout: int = 20, attempts: int = 2, base: str = SODA, **params) -> list[dict]:
     """Query one Socrata dataset. Raises DataSourceError instead of leaking requests errors.
 
     Measured: the same query is usually under 1s but 5-13s when Socrata has not
@@ -496,7 +497,7 @@ def registration_status(end_date: str | None) -> tuple[str, str | None]:
     return "lapsed", f"The registration ended {end_date[:10]} and has not been renewed in the {overdue} days since."
 
 
-_building_cache: TTLCache = TTLCache(maxsize=512, ttl=3600)
+_building_cache: TTLCache = TTLCache(maxsize=512, ttl=CACHE_SECONDS)
 
 
 def resolve_building(address: str) -> Building:

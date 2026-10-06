@@ -610,18 +610,23 @@ ESCALATION_STEPS = [
 ESCALATION_SOURCE = "https://www.nyc.gov/site/hpd/services-and-information/report-a-maintenance-issue.page"
 
 
-def matching_violations(open_rows: list[dict], issues: list[str], apartment: str | None) -> list[dict]:
+def matching_violations(open_rows: list[dict], issues: list[str], apartment: str | None) -> tuple[list, list]:
+    """(violations to cite, matching violations in apartments we can't confirm are the tenant's)."""
     apt = (apartment or "").upper().replace("APT", "").strip()
-    out = []
+    cite, elsewhere = [], []
     for v in open_rows:
         text = (v.get("novdescription") or "").upper()
-        v_apt = (v.get("apartment") or "").upper()
-        if apt and v_apt and v_apt != apt:
-            continue  # another tenant's apartment; public-area violations (no apartment) still count
         hits = [i for i in issues if any(k in text for k in ISSUE_KEYWORDS.get(i, []))]
-        if hits:
-            out.append({**v, "issues": hits})
-    return out
+        if not hits:
+            continue
+        v_apt = (v.get("apartment") or "").upper()
+        # Cite public-area violations, and the tenant's own apartment's. Never another tenant's
+        # apartment, and never guess which apartment is theirs.
+        if not v_apt or (apt and v_apt == apt):
+            cite.append({**v, "issues": hits})
+        else:
+            elsewhere.append({**v, "issues": hits})
+    return cite, elsewhere
 
 
 def draft_repair_request(state: dict, issues: list[str], details: str | None = None, apartment: str | None = None,
@@ -633,7 +638,7 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
     if unknown:
         raise ToolError(f"Unknown issue type(s): {unknown}.", f"Use only: {', '.join(ISSUE_KEYWORDS)}.")
 
-    cited = matching_violations(fetch_open_violations(b), issues, apartment)
+    cited, elsewhere = matching_violations(fetch_open_violations(b), issues, apartment)
     contacts = b.contacts_by_role()
     owner = (contacts.get("owner_company") or contacts.get("owner_person") or [{"name": b.owner_name or "Building Owner"}])[0]
     agent = (contacts.get("managing_agent") or [None])[0]
@@ -674,10 +679,15 @@ def draft_repair_request(state: dict, issues: list[str], details: str | None = N
         "cited_violations": [{"violation_id": v.get("violationid"), "class": v.get("class"),
                               "inspected": short_date(v.get("inspectiondate")), "apartment": v.get("apartment"),
                               "issues": v["issues"], **split_violation_text(v.get("novdescription"))} for v in cited],
+        **({"matching_violations_in_other_apartments": sorted({v.get("apartment") for v in elsewhere}),
+            "next_step": ("Open violations matching these issues exist in the apartment(s) listed. If the user lives "
+                          "in one of them, ask them to confirm, then call again with apartment set to cite them. "
+                          "Don't assume.")} if elsewhere and not apartment else {}),
         "escalation_steps": ESCALATION_STEPS,
         "escalation_source": ESCALATION_SOURCE,
-        "note": ("No matching open violations: the letter uses the tenant's description. Filing a 311 complaint "
-                 "creates an official record." if not cited else
+        "note": (("No matching open violations in public areas" + (" or the tenant's apartment" if apartment else "")
+                  + ": the letter uses the tenant's description. Filing a 311 complaint creates an official record.")
+                 if not cited else
                  "Cited violations are open in HPD records for this building" + (" and apartment." if apartment else ".")
                  ) + " This is a template, not legal advice.",
     }
@@ -1510,8 +1520,10 @@ TOOLS = [
                                "description": "The kinds of problem, e.g. ['water_leak', 'paint_plaster'] for a leaking ceiling."},
                     "details": {"type": "string",
                                 "description": "The tenant's own description, e.g. 'the bathroom ceiling has leaked since June'."},
-                    "apartment": {"type": "string", "description": "The tenant's apartment, e.g. '2N'. Omit if unknown."},
-                    "tenant_name": {"type": "string", "description": "Name to sign with. Omit to leave a placeholder."},
+                    "apartment": {"type": "string",
+                                  "description": "The tenant's apartment as THEY stated it, e.g. '2N'. Omit if they haven't said; never infer it."},
+                    "tenant_name": {"type": "string",
+                                    "description": "Name to sign with, only if the user gave it. Omit to leave a placeholder."},
                 },
                 "required": ["issues"],
             },
@@ -1626,6 +1638,7 @@ TOOL_MAP = {
 
 def run_tool(name: str, args: dict, state: dict) -> str:
     """Run one tool call. Models invent tool names and arguments; never let that crash the loop."""
+    name = (name or "").strip()  # seen in testing: Gemini called " estimate_sunlight"
     if name not in TOOL_MAP:
         return json.dumps({"error": f"Unknown tool '{name}'.", "next_step": f"Use one of: {', '.join(TOOL_MAP)}."})
     try:
