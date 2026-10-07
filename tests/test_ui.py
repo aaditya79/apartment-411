@@ -394,6 +394,10 @@ def main():
         assert pg.locator("#summary-strip .vchip.worse").count() >= 1 and pg.is_visible("#summary-strip")
         assert pg.locator(".plist li.prow.here").count() == 1 and pg.locator(".plist .pbar").count() >= 2
         assert pg.locator(".card", has_text="Evictions").locator(".vchip").count() == 0, "no comparison, no chip"
+        rats = json.loads(next(c["result"] for c in report_calls("155 East 92nd Street, Manhattan") if c["name"] == "check_pests"))["rodent_inspections_since_2023"]
+        rat_card = pg.locator(".card", has_text="Rats & bedbugs")
+        assert rat_card.locator(".headline .num").inner_text() == str(rats["failed_for_rats"]), "the rats card leads with failures"
+        assert rat_card.locator(".headline .what").inner_text().startswith(f"of {rats['inspections']} rat inspection"), rat_card.inner_text()
         pg = panel_for("1 Hanson Place, Brooklyn", 390)
         assert pg.locator(".card", has_text="Maintenance").locator(".vchip").inner_text().lower() == "better than area"
         assert pg.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0

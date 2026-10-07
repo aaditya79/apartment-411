@@ -1003,11 +1003,12 @@ function cardPests(f) {
   const area = f.get_neighborhood_context?.rats;
   const share = area?.share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023;
   const bugs = Array.isArray(r.bedbug_filings) ? r.bedbug_filings[0] : null;
+  // Lead with what failed: "4 of 10 rat inspections failed since 2023".
   const what = rats.inspections
-    ? `rat ${plural(rats.inspections, "inspection")} since 2023, ${rats.failed_for_rats} failed${share ? ` — ${esc(share)} of nearby rental lots failed one` : ""}`
+    ? `of ${rats.inspections} rat ${plural(rats.inspections, "inspection")} failed since 2023${share ? ` — ${esc(share)} of nearby rental lots failed one` : ""}`
     : "rat inspections since 2023 — no record either way";
   return card("Rats & bedbugs",
-    `${headline(rats.inspections ?? 0, what)}
+    `${headline(rats.inspections ? rats.failed_for_rats : 0, what)}
      <ul class="list">${rats.last_failed ? `<li><span>Last failed inspection</span><span>${esc(rats.last_failed)}</span></li>` : ""}
        <li><span>Latest bedbug filing</span><span>${bugs ? `${esc(bugs.filed)}: ${bugs.infested_units} infested` : Array.isArray(r.bedbug_filings) ? "none on file" : esc(r.bedbug_filings || "none on file")}</span></li></ul>`,
     r.bedbug_disclosure ? esc(r.bedbug_disclosure.split(" Source:")[0]) : "Rat inspections cover the whole lot; bedbug filings are self-reported. No inspections means no evidence either way.",
