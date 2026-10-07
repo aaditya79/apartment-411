@@ -308,7 +308,7 @@ def main():
         mobile.wait_for_selector("#to-examples", state="visible")
         assert mobile.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0, "no sideways scroll at 390px"
         print("ok  the header with Examples fits at 390px")
-        # 22. Every card is one control: its heading, body and padding all send that card's full query, as do Enter
+        # 22. Every card (all 9, so every tool is one click away) is one control: its heading, body and padding all send that card's full query, as do Enter
         # and Space. (The chat is answered by a stub here: this checks what is sent, not the answer.)
         page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
         page.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
@@ -316,12 +316,12 @@ def main():
         page.goto(BASE)
         examples = page.evaluate("EXAMPLES")
         cards = page.locator(".example")
-        assert cards.count() == len(examples) == 8, cards.count()
+        assert cards.count() == len(examples) == 9, cards.count()
         def expected(i):
             return "Review my lease" if examples[i].get("lease") else examples[i]["text"]
         def last_bubble():
             return page.locator(".msg.user").last.inner_text()
-        for i in range(8):
+        for i in range(9):
             card = page.locator(f'.example[data-i="{i}"]')
             for where in ("heading", "padding"):
                 card.scroll_into_view_if_needed()  # each send scrolls the chat down: measure right before clicking
@@ -348,7 +348,7 @@ def main():
         page.wait_for_function("!busy")
         assert page.evaluate("String(getSelection())") == "", "card text can't be selected (or dragged into the input)"
         page.unroute("**/chat")
-        print("ok  all 8 cards send their full query from the heading, the padding, Enter and Space; card text isn't selectable")
+        print("ok  all 9 cards send their full query from the heading, the padding, Enter and Space; card text isn't selectable")
         # 23. The floor sweep on a tall building is a chart: one row per band of floors, the 1h+ winter band marked.
         import sys as _sys
         _sys.path.insert(0, str(Path(__file__).parent.parent))

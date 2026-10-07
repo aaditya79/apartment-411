@@ -429,12 +429,14 @@ const EXAMPLES = [
   { k: "Review a lease", text: "Try a sample lease", lease: true },
   { k: "Get a repair made", text: "I live at 155 East 92nd Street, Manhattan. My bathroom ceiling has been leaking for months. Write a letter to my landlord." },
   { k: "The walk home", text: "How safe is the walk home from the subway at night to 155 East 92nd Street, Manhattan?" },
+  { k: "Know your rights", text: "What are my rights if my landlord won't fix the heat in NYC?" },
 ];
 const TOOL_LABELS = {
   look_up_building: "Building lookup", check_maintenance_record: "Maintenance record", get_tenant_complaints: "Tenant complaints",
   check_pests: "Rats & bedbugs", check_evictions_and_court: "Evictions & court", get_landlord_portfolio: "Landlord's buildings",
   get_neighborhood_context: "Vs. the neighborhood", draft_repair_request: "Repair letter", estimate_sunlight: "Sunlight model",
   fact_check_listing: "Listing fact-check", review_lease: "Lease review", night_walk_check: "Night walk",
+  tenant_rules: "Tenant rules",
 };
 const LOADING = [
   [/lease/i, ["Reading the lease…", "Checking NY rules…", "Comparing with city records…"]],
@@ -550,6 +552,7 @@ function gist(name, r) {
     case "review_lease": return `${(r.flags || []).length} flags`;
     case "night_walk_check": return r.walks ? `${r.walks.length} stations` : `${r.incidents_on_route} incidents · ${r.walk?.minutes} min`;
     case "draft_repair_request": return `${(r.cited_violations || []).length} violations cited`;
+    case "tenant_rules": return `${(r.rules || []).length} verified rule${(r.rules || []).length === 1 ? "" : "s"}`;
   }
   return "";
 }
@@ -593,6 +596,7 @@ const TOOL_STEPS = {
   get_neighborhood_context: "Comparing with nearby rentals", draft_repair_request: "Drafting the repair letter",
   estimate_sunlight: "Tracing the sun past nearby buildings", fact_check_listing: "Checking the listing's claims",
   review_lease: "Reading the lease against NY rules", night_walk_check: "Querying NYPD complaints along the walk",
+  tenant_rules: "Looking up the verified NY/NYC rules",
 };
 function showLoading(message) {
   const staged = (LOADING.find(([re]) => re.test(message)) || LOADING[LOADING.length - 1])[1];

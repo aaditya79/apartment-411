@@ -449,7 +449,7 @@ LANDLORD_WORDS = re.compile(r"landlord|owner|lessor|managing agent|notices?|c/o|
 
 
 def address_variants(address: str) -> list[str]:
-    """'184 188 Claremont Avenue' or '184-188 ...' is a range on one building: try each end.
+    """'155 157 East 92nd Street' or '155-157 ...' is a range on one building: try each end.
     ('45-17 21st St' is a Queens house number, not a range: its second part is smaller.)"""
     m = re.match(r"^(\d{1,5})\s*(?:[-–&/]|\s)\s*(\d{1,5})\s+(.*)$", address)
     if m and len(m.group(1)) == len(m.group(2)) and 0 < int(m.group(2)) - int(m.group(1)) <= 40:
