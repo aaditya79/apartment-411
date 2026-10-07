@@ -25,9 +25,9 @@ Run these three in order, in one session. They're the first three cards on the s
 3. **Fact-check a listing** "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?"
 
 What to expect:
-- **Query 1** runs seven tools: the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It opens with the most important finding and its comparison (no overall score), then red flags, green flags and questions to ask.
-- **Query 2** reuses the landlord portfolio: the head officer is registered on 18 buildings, and this one ranks 4th worst of the 15 with 6+ apartments.
-- **Query 3** fact-checks the two claims. "Well-maintained" is not supported by city records: 9 open violations, one immediately hazardous, one open since 2009. "Sun-drenched" can't be verified: the 4th floor's south-facing street side gets about 2.8 h of direct sun today, the court side much less, so it depends which way the apartment faces.
+- **Query 1** runs the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It opens with the most important finding and its comparison (no overall score), then red flags, green flags and questions to ask.
+- **Query 2** reuses the landlord portfolio from query 1: the buildings where the registered head officer appears on HPD registrations, where this building ranks among them, and the caveat that the match is by name.
+- **Query 3** calls the listing fact-check and gives each claim its own verdict. "Well-maintained" is not supported by city records: the building's open violations per apartment are well above the median for nearby rentals, including hazardous ones. "Sun-drenched" can't be verified: direct sun on the 4th floor depends on which way the windows face — the street side gets a few hours today, the light-court side almost none.
 
 The start screen also has example buttons for the sunlight model, the neighborhood comparison, a fictional sample lease, a repair letter and the night walk.
 
@@ -84,7 +84,7 @@ tests/              session, lease and end-to-end conversation tests
 ```
 
 **Sessions** are server-issued `uuid4`s:
-- **Only issued IDs are accepted:** a forged or unknown ID gets a new session, so two clients can never share one.
+- **Only issued IDs are accepted:** resuming with a forged or unknown ID (the start-screen box, `?session=<id>` or `GET /session`) is rejected with "No session found with that ID." A chat message that carries one is never attached to it: the server answers in a fresh session it issued itself, so two clients can never share one.
 - **Refresh:** a cookie resumes the session after a page refresh.
 - **Resume by ID:** paste a session ID into the start screen, or open `?session=<id>`, to continue a chat in another browser. The messages, tool-call cards and building panel come back.
 - **Scoped to the visitor:** resuming only works for whoever started the session: the same Columbia account (from IAP's `X-Goog-Authenticated-User-Email` header) when deployed, or the same browser locally. Anyone else gets "No session found with that ID".
