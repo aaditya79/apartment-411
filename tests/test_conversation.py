@@ -110,6 +110,16 @@ def check_walk_flags(turn: dict, label: str) -> bool:
 
 
 check_walk_flags(s1, "q1")
+# The landlord portfolio goes exactly where the tool placed it: never green while this building ranks badly in it.
+portfolio = next((json.loads(c["result"]) for c in s1["tool_calls"] if c["name"] == "get_landlord_portfolio"), None)
+if portfolio and portfolio.get("flag_placement"):
+    flags = {side: " ".join(b).lower() for side, b in flag_sections(s1["response"]).items()}
+    about_portfolio = re.compile(r"portfolio|registered head officer|khakshouri|other buildings")
+    if portfolio["flag_placement"] != "green":
+        check(not about_portfolio.search(flags["green"]),
+              f"q1: the portfolio is '{portfolio['flag_placement']}' but appears under green flags")
+    if portfolio["flag_placement"] != "red":
+        check(not about_portfolio.search(flags["red"]), f"q1: the portfolio is '{portfolio['flag_placement']}' but appears under red flags")
 s = chat("I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything? Include the walk "
          "home from the subway at night.", fresh(), "report with night walks")
 check(check_walk_flags(s, "report with night walks"), "the report should run night_walk_check and return several walks")

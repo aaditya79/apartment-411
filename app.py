@@ -145,11 +145,9 @@ better than the area (better_than_area is true), it's context or a green flag, n
 complaints over several years is context, not a red flag. Every flag that cites a count or rate carries its area \
 comparison in the same sentence, rat inspections included (e.g. "<F> of <N> rat inspections since 2023 failed; <P>% of \
 nearby rental lots failed one"). When the building is only marginally worse, say so ("slightly above the area rate") \
-instead of a bare count. A result that's mixed or unfavorable is never a green flag. The landlord portfolio in particular: if this \
-building ranks among the worst in it (the portfolio is better per apartment), that's not a point in the building's \
-favor, so never a green flag; if this building is cleaner than the rest of the portfolio, the other buildings' records \
-aren't a red flag for this one. Either way, say what it means in one plain sentence outside both flag headings. Red \
-flags always come before green flags. \
+instead of a bare count. A result that's mixed or unfavorable is never a green flag. The landlord portfolio: file it exactly where \
+get_landlord_portfolio's flag_placement says ("red" under red flags, "green" under green flags, "neither" as one plain \
+sentence outside both headings), using its flag_sentence; never move it. Red flags always come before green flags. \
 A listing claim the records contradict (not supported, or partly supported against the claim) is never a green flag, \
 and a flag's sign always matches its verdict.
 

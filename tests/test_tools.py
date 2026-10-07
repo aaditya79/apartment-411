@@ -241,6 +241,22 @@ def test_walk_counts_always_carry_their_window():
     assert app.with_walk_windows("3 reported incidents", [], []) == "3 reported incidents"  # no walk this turn
 
 
+def test_portfolio_flag_placement():
+    from tools import portfolio_flag
+    state = {}
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+    r = json.loads(run_tool("get_landlord_portfolio", {}, state))
+    # 0.31 per apartment vs 0.22 across the portfolio, 4th worst of 15: never green.
+    assert r["flag_placement"] == "red" and "registered head officer" in r["flag_sentence"] and "namesake" in r["flag_sentence"], r
+    place = lambda here, rank: portfolio_flag(here, 0.22, rank, 15, 18, "X", "HeadOfficer")[0]
+    assert place(0.31, 4) == "red"          # clearly worse rate, worse half
+    assert place(0.31, 12) == "neither"     # worse rate, better half: mixed, not green
+    assert place(0.10, 3) == "neither"      # better rate but in the worse half: not green
+    assert place(0.20, 8) == "neither"      # about in line
+    assert place(0.05, 14) == "green"       # clearly better on both
+    assert portfolio_flag(0.1, 0.1, None, 0, 1, "X", "HeadOfficer")[0] == "neither"  # no portfolio to compare
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

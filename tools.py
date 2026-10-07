@@ -450,6 +450,35 @@ def owner_person(b: nyc.Building) -> dict | None:
     return None
 
 
+PORTFOLIO_MARGIN = 0.25  # "clearly" better or worse than the portfolio rate: by more than a quarter
+
+
+def portfolio_flag(here: float | None, portfolio: float | None, rank: int | None, ranked: int, buildings: int,
+                   name: str, role: str) -> tuple[str, str]:
+    """('green' | 'red' | 'neither', the sentence to use) for this building against the rest of its portfolio.
+
+    rank is worst-first among buildings with 6+ apartments (1 = most open violations per apartment), so the
+    worse half is rank <= ranked / 2. Worse than the portfolio rate, or in the worse half, is never green; red
+    needs both, clearly; green needs clearly better on both; anything else is neither.
+    """
+    role = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", role).lower()  # HPD's "HeadOfficer" -> "head officer"
+    caveat = "(Matched by the person's name, so it may include a namesake and misses LLCs run by other officers.)"
+    where = f"the {buildings} buildings where {name} is the registered {role}"
+    if here is None or portfolio is None or buildings < 2:
+        return "neither", f"{name} is the registered {role} on {buildings} building{'s' if buildings != 1 else ''}; there's no portfolio to compare with. {caveat}"
+    worse_rate = here > portfolio * (1 + PORTFOLIO_MARGIN)
+    better_rate = here < portfolio * (1 - PORTFOLIO_MARGIN)
+    worse_half = rank is not None and ranked >= 2 and rank <= ranked / 2
+    better_half = rank is not None and ranked >= 2 and rank > ranked / 2
+    standing = f", ranking {rank} of {ranked} worst-first among those with 6+ apartments" if rank else ""
+    rates = f"{here} open violations per apartment here vs {portfolio} across {where}{standing}"
+    if worse_rate and worse_half:
+        return "red", f"This building does worse than the rest of its landlord's portfolio: {rates}. {caveat}"
+    if better_rate and (better_half or rank is None) and not (here > portfolio):
+        return "green", f"This building is cleaner than the rest of its landlord's portfolio: {rates}. {caveat}"
+    return "neither", f"This building is roughly in line with its landlord's portfolio or mixed against it: {rates}. {caveat}"
+
+
 def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
     b = current_building(address, state)
     if not b.is_registered:
@@ -542,6 +571,9 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
     rankable = sorted([t for t in table if t["apartments"] >= 6], key=lambda t: -(t["per_apartment"] or 0))
     this = next(t for t in table if t["this_building"])
     rank = next((i + 1 for i, t in enumerate(rankable) if t["this_building"]), None)
+    portfolio_rate = per_apartment(total_open, total_units)
+    placement, sentence = portfolio_flag(this["per_apartment"], portfolio_rate, rank, len(rankable), len(table),
+                                         nyc.contact_name(person), person.get("type", "contact"))
 
     return {
         "address": b.label,
@@ -557,6 +589,9 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
         "hpd_cases_since_2023": sum(cases.values()),
         "this_building": {"per_apartment": this["per_apartment"], "open_violations": this["open_violations"],
                           "rank_worst_first": f"{rank} of {len(rankable)} buildings with 6+ apartments" if rank else None},
+        # Where this belongs in a report, decided here rather than by the model: copy flag_sentence, file it as told.
+        "flag_placement": placement,
+        "flag_sentence": sentence,
         "worst_buildings": [{k: t[k] for k in ("address", "borough", "apartments", "open_violations", "per_apartment",
                                                "evictions_since_2023", "hpd_cases_since_2023")} for t in rankable[:8]],
         "all_buildings": [[t["address"], t["apartments"], t["open_violations"], t["per_apartment"], t["lat"], t["lon"]]
