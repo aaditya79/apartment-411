@@ -91,6 +91,21 @@ a:hover { text-decoration-thickness: 2px; }
    (a dragged heading dropped in the input would be sent as the question). */
 .example { cursor: pointer; user-select: none; -webkit-user-select: none; }
 .example > * { pointer-events: none; }
+/* Floor sweep: one row per band of floors, Dec 21 (filled) and today (outlined) bars on one scale. */
+.sweep { list-style: none; margin: var(--s2) 0 0; padding: 0; }
+.sweep-row { display: grid; grid-template-columns: 96px 1fr; gap: var(--s2); align-items: center; padding: 3px 0; border-bottom: 1px solid var(--rule); }
+.sweep-row:last-child { border-bottom: 0; }
+.sweep-row.mark .sfl { font-weight: 700; color: var(--ink); }
+.sweep-row.mark .sfl::after { content: " ◀"; }
+.sfl { font: var(--t-data); color: var(--ink-2); white-space: nowrap; }
+.sbars { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sbar-wrap { display: flex; align-items: center; gap: var(--s1); min-width: 0; }
+.sbar { display: inline-block; height: 8px; border: 1px solid var(--ink); min-width: 1px; flex: none; }
+.sbar.w { background: #ffd23f; }
+.sbar.t { background: var(--surface); }
+.sval { font: 11px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.sweep-legend { display: flex; flex-wrap: wrap; gap: var(--s3); font: 11px var(--mono); color: var(--muted); }
+.sweep-legend .sbar { width: 18px; margin-right: 4px; vertical-align: -1px; }
 .example .k { display: block; font: var(--t-eyebrow); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: var(--s1); }
 .fineprint { margin-top: var(--s3); font: var(--t-caption); color: var(--muted); max-width: 46em; }
 .resume { margin-top: var(--s5); display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
@@ -967,10 +982,25 @@ function cardSun(f) {
 
 function cardSweep(f) {
   const r = f.sun_sweep; if (!r) return "";
+  const lowest = r.lowest_floor_with_1h_winter_sun;
+  const note = `<div class="vs" style="margin-top:8px">${lowest ? `Lowest floor with 1h+ winter sun: <b>${lowest}</b>` : "No floor on this side gets 1h+ of direct winter sun."}</div>`;
+  if (!r.bands) {  // results saved before the chart existed
+    return card(`Winter sun by floor · ${esc(r.side)}`,
+      `<ul class="list"><li><span>Dec 21</span><span>${esc(r.winter_sun_by_floor)}</span></li><li><span>Today</span><span>${esc(r.today_sun_by_floor)}</span></li></ul>${note}`,
+      "Rounded to the nearest half hour.");
+  }
+  // One row per run of floors with the same hours: Dec 21 (filled) and today (outlined), on one scale.
+  const max = Math.max(6, ...r.bands.map((b) => Math.max(b.winter_h, b.today_h)));
+  const bar = (h, kind) => `<span class="sbar-wrap"><span class="sbar ${kind}" style="width:calc((100% - 44px) * ${h / max})"></span><span class="sval">${h ? `${h}h` : "0"}</span></span>`;
+  const rows = r.bands.map((b) => {
+    const label = b.from === b.to ? `Floor ${b.from}` : `Floors ${b.from}–${b.to}`;
+    const mark = lowest && b.from <= lowest && lowest <= b.to;
+    return `<li class="sweep-row${mark ? " mark" : ""}"><span class="sfl">${label}</span><span class="sbars">${bar(b.winter_h, "w")}${bar(b.today_h, "t")}</span></li>`;
+  }).join("");
+  const legend = `<div class="sweep-legend"><span><i class="sbar w"></i>Dec 21</span><span><i class="sbar t"></i>Today</span><span>hours of direct sun</span></div>`;
   return card(`Winter sun by floor · ${esc(r.side)}`,
-    `<ul class="list"><li><span>Dec 21</span><span>${esc(r.winter_sun_by_floor)}</span></li><li><span>Today</span><span>${esc(r.today_sun_by_floor)}</span></li></ul>
-     <div class="vs" style="margin-top:6px">${r.lowest_floor_with_1h_winter_sun ? `Lowest floor with 1h+ winter sun: <b>${r.lowest_floor_with_1h_winter_sun}</b>` : "No floor on this side gets 1h+ of direct winter sun."}</div>`,
-    "Rounded to the nearest half hour.");
+    `${legend}<ul class="sweep" aria-label="Direct sun by floor: Dec 21 and today">${rows}</ul>${note}`,
+    "Rounded to the nearest half hour. Same scale on every row.");
 }
 
 function walkWindow(w) {

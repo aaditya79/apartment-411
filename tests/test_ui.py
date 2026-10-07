@@ -349,6 +349,26 @@ def main():
         assert page.evaluate("String(getSelection())") == "", "card text can't be selected (or dragged into the input)"
         page.unroute("**/chat")
         print("ok  all 8 cards send their full query from the heading, the padding, Enter and Space; card text isn't selectable")
+        # 23. The floor sweep on a tall building is a chart: one row per band of floors, the 1h+ winter band marked.
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from tools import run_tool as _run_tool
+        sweep = _run_tool("estimate_sunlight", {"address": "1 Hanson Place, Brooklyn"}, {})
+        bands = json.loads(sweep)["bands"]
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"response": "ok", "session_id": json.loads(r.request.post_data)["session_id"],
+             "tool_calls": [{"name": "estimate_sunlight", "args": {}, "result": sweep}]})))
+        page.goto(BASE)
+        page.fill("#input", "How much winter sun does each floor of 1 Hanson Place, Brooklyn get?")
+        page.click("#send")
+        page.wait_for_selector(".sweep-row")
+        assert page.locator(".sweep-row").count() == len(bands), (page.locator(".sweep-row").count(), len(bands))
+        assert page.locator(".sweep-row.mark").count() == 1 and page.locator(".sweep .sbar.w").count() == len(bands)
+        assert "Lowest floor with 1h+ winter sun" in page.inner_text(".card:has-text('Winter sun by floor')")
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        page.unroute("**/chat")
+        print(f"ok  a 41-floor sweep renders as {len(bands)} chart rows (Dec 21 and today), with the 1h+ winter band marked")
         browser.close()
     print("All UI tests passed.")
 

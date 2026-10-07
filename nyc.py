@@ -357,7 +357,10 @@ def _check_match(asked: str, label: str, borough: str) -> None:
     # A borough named in the question must be the borough we found.
     wanted = _borough_asked(asked)
     if wanted and wanted != borough:
-        raise AddressError(f"'{asked}' matched '{label}' in {borough}, not {wanted}.", suggestion=f"{label} ({borough})")
+        # GeoSearch ranks by ZIP code, not by borough name: without a ZIP it may never search the borough named.
+        raise AddressError(f"'{asked}' matched '{label}' in {borough}, not {wanted}. The city geocoder searches by ZIP "
+                           f"code, not borough name: if the address is in {wanted}, add its ZIP code.",
+                           suggestion=f"{label} ({borough})")
 
     house = asked_words[0] if asked_words and asked_words[0][0].isdigit() else None
     street = [w for w in asked_words[1 if house else 0:] if w not in _PLACE_WORDS and w not in _GENERIC]

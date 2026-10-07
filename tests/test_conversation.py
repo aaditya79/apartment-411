@@ -155,7 +155,8 @@ check(not any(c["args"].get("apartment") for c in s["tool_calls"] if c["name"] =
       "6 must not invent the tenant's apartment")
 s = chat("How safe is the walk home at night, and how long is my commute to Columbia (116th & Broadway)?", sid1,
          "7 night walk + commute")
-check("night_walk_check" in tools_used(s), "7 should run the night walk")
+# Run now, or reused from earlier in this session (query 1 sometimes runs it): both answer from the tool.
+check("night_walk_check" in tools_used(s) or "night_walk_check" in tools_used(s1), "7 should run (or reuse) the night walk")
 check(not any(w in s["response"].lower() for w in ("blocks from", "few blocks", "walking distance", "same avenue", "minutes by subway", "minute ride")),
       "7 must not make up commute distances or times")
 
@@ -411,6 +412,15 @@ for turn in (fc, comp, pests):
     seen = " ".join(c["result"] for c in turn["tool_calls"]) + " ".join(c["result"] for c in fc["tool_calls"])
     for ratio in re.findall(r"\b(\d+(?:\.\d+)?)x\b", text):
         check(f"{ratio}x" in seen, f"the ratio {ratio}x isn't in any tool result (copied or computed)")
+
+# --- A tall building's floor sweep: a short summary, the card carries the bands ---
+print("\n=== floor sweep, tall building")
+s = chat("How much winter sun does each floor of 1 Hanson Place, Brooklyn get?", fresh(), "sweep: 41 floors")
+check(any(c["name"] == "estimate_sunlight" for c in s["tool_calls"]), "should run the floor sweep")
+floor_mentions = len(re.findall(r"\bfloors?\s+\d+", s["response"], re.IGNORECASE))
+check(floor_mentions <= 4, f"the answer should summarize, not list every band ({floor_mentions} floor mentions)")
+check(bool(re.search(r"\b2\.5\b", s["response"]) and re.search(r"\b9\b", s["response"])) or "range" in s["response"].lower(),
+      "the answer should give the range across the building")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")

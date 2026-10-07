@@ -208,6 +208,30 @@ def test_counts_agree_across_tools():
     assert "per 100 apartments" in rel["hpd_complaints"]["vs_area"] and "scope" in rel["rat_inspections"]
 
 
+def test_floor_sweep_bands_and_summary():
+    r = json.loads(run_tool("estimate_sunlight", {"address": "1 Hanson Place, Brooklyn"}, {}))
+    bands = r["bands"]
+    assert bands[0]["from"] == 1 and bands[-1]["to"] == r["floors"] == 41, bands
+    assert all(b["from"] == a["to"] + 1 for a, b in zip(bands, bands[1:])), "bands cover every floor once, in order"
+    winter = [b["winter_h"] for b in bands]
+    assert r["range_h"]["winter (Dec 21)"] == [min(winter), max(winter)], r["range_h"]
+    change = r["biggest_change"]
+    assert change and change["to_floor"] == change["from_floor"] + 1 and change["to_h"] != change["from_h"], change
+    # The model sees the summary, not the band list (the card draws it).
+    import app
+    seen = json.loads(app.for_the_model(json.dumps(r)))
+    assert isinstance(seen["bands"], str) and isinstance(seen["winter_sun_by_floor"], str) and "range_h" in seen
+
+
+def test_staten_island_addresses():
+    for address in ("10 Richmond Terrace, Staten Island", "1 Edgewater Plaza, Staten Island"):
+        r = json.loads(run_tool("look_up_building", {"address": address}, {}))
+        assert "error" not in r and r["borough"] == "Staten Island", (address, r)
+    # No 100 Bay Street on Staten Island in the city's data: refused, never silently the Bronx one, with the ZIP hint.
+    r = json.loads(run_tool("look_up_building", {"address": "100 Bay Street, Staten Island"}, {}))
+    assert "not Staten Island" in r["error"] and "ZIP code" in r["error"], r
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

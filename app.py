@@ -101,7 +101,9 @@ meant, before offering anything floor-specific.
 - Sun sides: name each side exactly as the tool labels it (e.g. "northeast side: faces a light court or shaft \
 (~3 m to the next wall), wall 1 of 3"); don't rename, merge or regroup sides.
 - "How much sun?" without a floor: call estimate_sunlight with no floor (it returns every floor on the street \
-side), then offer a detailed check once they tell you their floor.
+side), then offer a detailed check once they tell you their floor. Describe the sweep in one or two sentences: the \
+range across the building (range_h, winter and today), where it changes most (biggest_change), and the lowest floor \
+with 1h+ of winter sun. Don't list the bands floor by floor: the card shows them.
 - If a message carries a note that the user picked a check from the menu, prefer that tool when it fits their \
 question. If it doesn't fit, say so in one line and use the tools that do. The pick is a hint, not an order.
 - You cannot plan commutes or estimate travel times or distances; if asked, say only that, and offer the night-walk check from the station they'd use. Never describe where places are from your own knowledge: no "a few blocks from campus", "walking distance", "close to the park". The only distances you may give are the walk minutes a tool returned.
@@ -177,6 +179,9 @@ MAX_TOOL_ROUNDS = 10
 
 # Map-only fields: the UI draws them from tool_calls, the model doesn't need hundreds of coordinates.
 MAP_ONLY_KEYS = ("points", "all_buildings", "wall_lat_lon", "route_lat_lon")
+# Card-only fields: the floor-by-floor sweep is drawn as a chart; the model gets its summary (range_h, biggest_change,
+# lowest_floor_with_1h_winter_sun) so the answer stays short. A specific floor is a single-floor estimate_sunlight.
+CARD_ONLY_KEYS = ("bands", "winter_sun_by_floor", "today_sun_by_floor")
 
 
 def for_the_model(result: str) -> str:
@@ -188,7 +193,9 @@ def for_the_model(result: str) -> str:
 
     def trim(value):
         if isinstance(value, dict):
-            return {k: (f"[{len(v)} map items]" if k in MAP_ONLY_KEYS and isinstance(v, list) else trim(v))
+            return {k: (f"[{len(v)} map items]" if k in MAP_ONLY_KEYS and isinstance(v, list)
+                        else "[on the card; call with a floor for one floor's detail]" if k in CARD_ONLY_KEYS
+                        else trim(v))
                     for k, v in value.items()}
         if isinstance(value, list):
             return [trim(v) for v in value]

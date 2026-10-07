@@ -948,6 +948,27 @@ def sweep_summary(rows: list[tuple[int, float]]) -> str:
     return ", ".join(parts)
 
 
+def sweep_bands(winter: list[tuple[int, float]], today: list[tuple[int, float]]) -> list[dict]:
+    """Runs of floors with the same winter and today hours, for the card's chart."""
+    bands = []
+    for (f, w), (_, t) in zip(winter, today):
+        if bands and bands[-1]["winter_h"] == w and bands[-1]["today_h"] == t:
+            bands[-1]["to"] = f
+        else:
+            bands.append({"from": f, "to": f, "winter_h": w, "today_h": t})
+    return bands
+
+
+def biggest_change(winter: list[tuple[int, float]], today: list[tuple[int, float]]) -> dict | None:
+    """The step between neighboring floors where direct sun changes most (winter first, else today)."""
+    for season, rows in (("winter (Dec 21)", winter), ("today", today)):
+        steps = [(abs(b[1] - a[1]), a, b) for a, b in zip(rows, rows[1:]) if b[1] != a[1]]
+        if steps:
+            _, a, b = max(steps, key=lambda x: x[0])
+            return {"season": season, "from_floor": a[0], "to_floor": b[0], "from_h": a[1], "to_h": b[1]}
+    return None
+
+
 def estimate_sunlight(state: dict, floor="all", side: str = "all", address: str | None = None) -> dict:
     b = current_building(address, state)
     site = site_for(b)
@@ -968,6 +989,10 @@ def estimate_sunlight(state: dict, floor="all", side: str = "all", address: str 
             "address": b.label, "side": street["label"], "floors": top_floor,
             "winter_sun_by_floor": sweep_summary(winter), "today_sun_by_floor": sweep_summary(today),
             "lowest_floor_with_1h_winter_sun": next((f for f, h in winter if h >= 1), None),
+            "bands": sweep_bands(winter, today),
+            "range_h": {"winter (Dec 21)": [min(h for _, h in winter), max(h for _, h in winter)],
+                        "today": [min(h for _, h in today), max(h for _, h in today)]},
+            "biggest_change": biggest_change(winter, today),
             "note": "Hours rounded to the nearest half hour (median of 12 runs). " + SUN_NOTE,
         }
 
