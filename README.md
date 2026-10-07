@@ -14,7 +14,7 @@ It can also draft a repair letter that cites the city's own open violations.
 
 I built it for someone about to sign a lease in NYC, or a tenant whose landlord is slow to fix things. Everything it says comes from public city records through tool calls, and every tool call is shown in the chat with its arguments and result.
 
-**Live:** [https://apartment-411-j2i7dlw5aq-ue.a.run.app](https://apartment-411-j2i7dlw5aq-ue.a.run.app) (open, no sign-in needed). The first query after a quiet spell can take up to a minute while city data loads.
+**Live:** [https://apartment-411-j2i7dlw5aq-ue.a.run.app](https://apartment-411-j2i7dlw5aq-ue.a.run.app) (behind IAP: sign in with a columbia.edu Google account). The first query after a quiet spell can take up to a minute while city data loads.
 
 ## Sample queries for graders
 
@@ -118,7 +118,7 @@ palettes/           the color palettes I tried and the contrast checkers (check_
 tests/              tool, session, lease, browser and end-to-end conversation tests
 ```
 
-Sessions are `uuid4` IDs issued by the server, and only issued IDs are accepted. Resuming with a forged or unknown ID (through the start-screen box, `?session=<id>` or `GET /session`) is rejected with "No session found with that ID." A chat message carrying an unknown ID isn't attached to it either; the server answers in a new session of its own, so two clients can never share one. A cookie brings your session back after a page refresh, and you can paste a session ID into the start screen (or open `?session=<id>`) to continue in another browser, with the messages, tool calls and building panel restored. Resuming only works for whoever started the session: the same browser (by cookie), or, when IAP is on, the same Columbia account (from IAP's `X-Goog-Authenticated-User-Email` header). **New search** starts a fresh session and drops the old session's lease. Sessions live in memory, so they're lost when Cloud Run restarts the instance.
+Sessions are `uuid4` IDs issued by the server, and only issued IDs are accepted. Resuming with a forged or unknown ID (through the start-screen box, `?session=<id>` or `GET /session`) is rejected with "No session found with that ID." A chat message carrying an unknown ID isn't attached to it either; the server answers in a new session of its own, so two clients can never share one. A cookie brings your session back after a page refresh, and you can paste a session ID into the start screen (or open `?session=<id>`) to continue in another browser, with the messages, tool calls and building panel restored. Resuming only works for whoever started the session: the same Columbia account (from IAP's `X-Goog-Authenticated-User-Email` header) when deployed, or the same browser locally. **New search** starts a fresh session and drops the old session's lease. Sessions live in memory, so they're lost when Cloud Run restarts the instance.
 
 The snapshot (`data/snapshot.json.gz`, built 2026-10-05) holds citywide counts that are too slow to query live, for neighborhood comparisons and baselines:
 - open violations, complaints, heat complaints and rodent inspections per lot;
@@ -205,7 +205,7 @@ uv run build_snapshot.py                                # rebuild the citywide s
 
 ## Deployment
 
-It runs on Cloud Run (us-east1) with continuous deploy from this repo's `main` branch. It's built with Google Cloud's buildpacks, with the entrypoint `uvicorn app:app --host 0.0.0.0 --port $PORT`. For grading it allows unauthenticated access, so no Columbia account is needed. During development it sat behind Identity-Aware Proxy for columbia.edu, which can be turned back on after grades (`gcloud run services update apartment-411 --region us-east1 --iap`, then remove the `allUsers` invoker binding). `NYC_OPEN_DATA_APP_TOKEN` is read from Secret Manager and never committed. The service has 1 vCPU and 512 MiB (the server peaked at about 330 MB with 3 sessions running at once and a PDF lease review), min and max instances set to 1, and CPU always allocated.
+It runs on Cloud Run (us-east1) with continuous deploy from this repo's `main` branch. It's built with Google Cloud's buildpacks, with the entrypoint `uvicorn app:app --host 0.0.0.0 --port $PORT`. It sits behind Identity-Aware Proxy, so it requires a columbia.edu sign-in. `NYC_OPEN_DATA_APP_TOKEN` is read from Secret Manager and never committed. The service has 1 vCPU and 512 MiB (the server peaked at about 330 MB with 3 sessions running at once and a PDF lease review), min and max instances set to 1, and CPU always allocated.
 
 There's exactly one instance because sessions are in memory. CPU stays allocated so the cache-warming thread keeps running and the first queries are fast. It doesn't go below 1 vCPU because Cloud Run only allows that with request-based billing and a concurrency of 1, which would make a second visitor wait for the first.
 
