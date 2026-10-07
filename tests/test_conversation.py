@@ -202,7 +202,8 @@ check({"1", "2", "C"} <= set(lines_asked), f"should ask by line 2, 1 and C; aske
 check(len(stations) == len(set(stations)) == 3, f"three distinct stations expected, got {stations}")
 check("tool-call limit" not in s["response"], "must finish with an answer, not the tool-call limit")
 ending = s["response"].strip().split("\n")[-1]
-check("Cathedral Pkwy" in ending and "C" in ending,
+# This checks the recommendation, not the spelling: "Cathedral Pkwy" or "Cathedral Parkway" both name the station.
+check(bool(re.search(r"Cathedral (Pkwy|Parkway)", ending)) and "C" in ending,
       f"should end by recommending the C at Cathedral Pkwy (2 min, 0 incidents); ended with: {ending[:200]}")
 
 # --- "All the options": every walkable station, and every count carries its window ---
