@@ -17,26 +17,26 @@
 /* Apartment 411: a building record, set like one. Two faces: IBM Plex Mono for anything that reads as a
    record (labels, counts, names, tool names), IBM Plex Sans for prose. 4px spacing scale. Hard borders,
    weighted by importance. One interactive accent (ink blue); the yellow is brand only. */
-:root {
-  --paper: #f4efe4;      /* page */
-  --panel: #ebe5d7;      /* the building-file column */
-  --surface: #fbf8f1;    /* cards, answers */
-  --ink: #1b1813;        /* text: 15.4:1 on paper */
-  --ink-2: #3d382f;      /* secondary text: 10.2:1 */
-  --muted: #5a5448;      /* captions: 6.6:1 on paper, 6.0:1 on panel */
-  --rule: #d9d0bd;       /* hairlines */
-  --accent: #1f3d66;     /* interactive only: buttons, links, focus, active chip (9.6:1) */
-  --accent-soft: #e2e8f1;
+:root {  /* palette A, cool archival: see palettes/check.py for every measured pair */
+  --paper: #eef0ef;      /* page */
+  --panel: #e2e5e5;      /* the building-file column */
+  --surface: #f8f9f9;    /* cards, answers */
+  --ink: #101316;        /* text: 16.3:1 on paper */
+  --ink-2: #2c3136;      /* secondary text: 11.5:1 */
+  --muted: #4b5259;      /* captions: 6.9:1 on paper, 6.3:1 on panel */
+  --rule: #c9cfd2;       /* hairlines */
+  --accent: #1c3e72;     /* interactive only: buttons, links, focus, active chip (9.3:1) */
+  --accent-soft: #dfe6f1;
   --brand: #f2c230;      /* the logo and highlights, never a control */
-  --flag: #94352a; --flag-bg: #f2e0da;        /* red: likely a problem */
-  --caution: #7a5208; --caution-bg: #f1e6cd;  /* amber: check / inconsistent */
-  --clear: #2f6340; --clear-bg: #dfeadf;      /* green: supported / clean */
-  --on-accent: #fff;     /* text and the chip × on accent fills */
-  --accent-hover: #16304f;
-  --hover-bg: #fff;      /* a hovered example card */
-  --code-bg: #fffef9;    /* tool-call JSON */
-  --json-key: #1f3d66; --json-str: #2f6340; --json-num: #7a3f8f; --json-lit: #94352a;
-  --map-bg: #ddd;        /* behind map tiles while they load */
+  --flag: #86271e; --flag-bg: #f4e0dc;        /* red: likely a problem */
+  --caution: #835a0a; --caution-bg: #f4ecd8;  /* amber: check / inconsistent */
+  --clear: #2a6140; --clear-bg: #dceadf;      /* green: supported / clean */
+  --on-accent: #ffffff;     /* text and the chip × on accent fills */
+  --accent-hover: #132c52;
+  --hover-bg: #ffffff;      /* a hovered example card */
+  --code-bg: #fbfcfc;    /* tool-call JSON */
+  --json-key: #1c3e72; --json-str: #2a6140; --json-num: #6d3b8a; --json-lit: #86271e;
+  --map-bg: #d7dbdc;        /* behind map tiles while they load */
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
   --sans: "IBM Plex Sans", system-ui, sans-serif;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
@@ -815,8 +815,8 @@ function barChart(entries, w = 240, h = 70) {
   const slot = Math.max(bw + 4, 42);  // room for a "Dec '25" label under each bar
   const bars = entries.map(([label, v], i) => {
     const bh = (v / max) * (h - 22), x = 4 + i * slot + (slot - 4 - bw) / 2, y = h - 14 - bh;
-    return `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="#17140f"/><text x="${x + bw / 2}" y="${y - 2}" font-size="9" text-anchor="middle">${v}</text>
-      <text x="${x + bw / 2}" y="${h - 3}" font-size="8" text-anchor="middle" fill="#6e675b">${esc(label)}</text>`;
+    return `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" style="fill:var(--ink)"/><text x="${x + bw / 2}" y="${y - 2}" font-size="9" text-anchor="middle">${v}</text>
+      <text x="${x + bw / 2}" y="${h - 3}" font-size="8" text-anchor="middle" style="fill:var(--muted)">${esc(label)}</text>`;
   }).join("");
   const width = Math.max(w, 8 + entries.length * slot);
   return `<svg viewBox="0 0 ${width} ${h}" width="100%" height="${h}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="bar chart">${bars}</svg>`;
@@ -887,14 +887,14 @@ function sunChart(side) {
   const bars = order.map((k, i) => {
     const [m, lo, hi] = side.hours_median_min_max[k] || [0, 0, 0];
     const x = 30 + i * 55;
-    return `<rect x="${x}" y="${y(m)}" width="22" height="${h - 16 - y(m)}" fill="#ffd23f" stroke="#17140f"/>
-      <line x1="${x + 11}" x2="${x + 11}" y1="${y(hi)}" y2="${y(lo)}" stroke="#17140f" stroke-width="1.5"/>
-      <line x1="${x + 6}" x2="${x + 16}" y1="${y(hi)}" y2="${y(hi)}" stroke="#17140f"/><line x1="${x + 6}" x2="${x + 16}" y1="${y(lo)}" y2="${y(lo)}" stroke="#17140f"/>
+    return `<rect x="${x}" y="${y(m)}" width="22" height="${h - 16 - y(m)}" fill="#ffd23f" style="stroke:var(--ink)"/>
+      <line x1="${x + 11}" x2="${x + 11}" y1="${y(hi)}" y2="${y(lo)}" style="stroke:var(--ink)" stroke-width="1.5"/>
+      <line x1="${x + 6}" x2="${x + 16}" y1="${y(hi)}" y2="${y(hi)}" style="stroke:var(--ink)"/><line x1="${x + 6}" x2="${x + 16}" y1="${y(lo)}" y2="${y(lo)}" style="stroke:var(--ink)"/>
       <text x="${x + 11}" y="${y(hi) - 3}" font-size="9" text-anchor="middle">${m}h</text>
-      <text x="${x + 11}" y="${h - 3}" font-size="9" text-anchor="middle" fill="#6e675b">${labels[i]}</text>`;
+      <text x="${x + 11}" y="${h - 3}" font-size="9" text-anchor="middle" style="fill:var(--muted)">${labels[i]}</text>`;
   }).join("");
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="direct sun hours by season">
-    <line x1="24" x2="${w}" y1="${h - 16}" y2="${h - 16}" stroke="#d6cebd"/><text x="0" y="${y(12) + 3}" font-size="8" fill="#6e675b">12h</text><text x="4" y="${y(6) + 3}" font-size="8" fill="#6e675b">6h</text>${bars}</svg>`;
+    <line x1="24" x2="${w}" y1="${h - 16}" y2="${h - 16}" style="stroke:var(--rule)"/><text x="0" y="${y(12) + 3}" font-size="8" style="fill:var(--muted)">12h</text><text x="4" y="${y(6) + 3}" font-size="8" style="fill:var(--muted)">6h</text>${bars}</svg>`;
 }
 
 function cardSun(f) {
