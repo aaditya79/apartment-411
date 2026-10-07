@@ -61,6 +61,18 @@ a:hover { text-decoration-thickness: 2px; }
 .masthead { display: flex; align-items: center; gap: var(--s4); padding: var(--s2) var(--s5); border-bottom: 2px solid var(--ink); background: var(--paper); position: sticky; top: 0; z-index: 1000; min-height: 52px; }
 .logo { display: flex; align-items: center; gap: var(--s2); font: 700 20px/1 var(--mono); letter-spacing: -.01em; text-transform: uppercase; white-space: nowrap; background: none; border: 0; padding: var(--s1) 0; }
 .logo .num { background: var(--ink); color: var(--brand); padding: 3px 7px; }
+/* The 411 as an MTA-style line bullet: Helvetica digits centered in a filled shape. Shape: bullet-pill (a rounded
+   lozenge, as the MTA does for multi-character bullets) or bullet-circle (a true circle, tighter type). Color:
+   bullet-a (black shape, yellow digits) or bullet-b (yellow shape, black digits). */
+.num.bullet { display: inline-flex; align-items: center; justify-content: center; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 700; line-height: 1; letter-spacing: -.02em; }
+.num.bullet.bullet-a { background: var(--ink); color: var(--brand); }
+.num.bullet.bullet-b { background: var(--brand); color: var(--ink); }
+.logo .num.bullet { height: 26px; font-size: 17px; }
+.logo .num.bullet-pill { padding: 0 9px; border-radius: 13px; }
+.logo .num.bullet-circle { width: 26px; padding: 0; border-radius: 50%; font-size: 11.5px; letter-spacing: -.05em; }
+.start h1 .num.bullet { height: 1.15em; font-size: 1em; vertical-align: .08em; }
+.start h1 .num.bullet-pill { padding: 0 .3em; border-radius: .575em; }
+.start h1 .num.bullet-circle { width: 1.15em; padding: 0; border-radius: 50%; font-size: .62em; height: 1.85em; width: 1.85em; letter-spacing: -.05em; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .masthead .tag { color: var(--ink-2); font: var(--t-caption); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session { display: flex; align-items: center; gap: var(--s2); font: 12px var(--mono); color: var(--muted); }
@@ -323,7 +335,7 @@ svg text { font-family: var(--mono); }
 </head>
 <body>
 <header class="masthead">
-  <button class="logo" id="home" title="New search">Apartment <span class="num">411</span></button>
+  <button class="logo" id="home" title="New search">Apartment <span class="num bullet bullet-pill bullet-a">411</span></button>
   <div class="tag">City records on any NYC rental, before you sign.</div>
   <div class="session" id="session" hidden>
     <span id="session-label" title="Click to copy the full session ID">Session —</span>
@@ -338,7 +350,7 @@ svg text { font-family: var(--mono); }
     <div class="scroll" id="scroll">
       <div class="start" id="start">
         <div class="examples-title">NYC renter's check · built on public city data</div>
-        <h1>Apartment <span class="num">411</span></h1>
+        <h1>Apartment <span class="num bullet bullet-pill bullet-a">411</span></h1>
         <p class="lede">Get the 411 on any NYC apartment <span class="hl">before you sign</span>. Give it an address, a listing or your lease, and it tells you what the listing won't.</p>
         <div class="checks">
           <div>Open violations &amp; repair speed</div>
