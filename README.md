@@ -18,7 +18,7 @@ It's built for someone about to sign a lease in NYC, or a current tenant whose l
 
 ## Sample queries for graders
 
-Run these three in order, in one session. They're the first three cards on the start screen ("Start here"), word for word, so each is one click:
+Run these three in order, in one session. They're the first three cards on the start screen ("Start here"), word for word, so each is one click. The cards stay above the conversation after the first answer: scroll up or press **Examples** in the header to click the next one in the same session (only **New search** starts a new session):
 
 1. **Should I rent here?** "I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?"
 2. **The landlord** "Who owns 155 East 92nd Street in Manhattan, and how do they treat tenants in their other buildings?"

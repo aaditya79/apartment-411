@@ -111,6 +111,7 @@ details.capabilities > summary:hover { background: var(--accent-soft); }
 
 /* ---- Messages ---- */
 #messages { display: flex; flex-direction: column; gap: var(--s5); }
+#messages:not(:empty) { border-top: 1px solid var(--rule); padding-top: var(--s5); margin-top: var(--s5); }  /* the chat below the examples */
 .msg.user { align-self: flex-end; max-width: 85%; background: var(--ink); color: var(--paper); padding: var(--s2) var(--s3); border-radius: 2px; font: 15px/1.5 var(--sans); white-space: pre-wrap; word-break: break-word; }
 .msg.user.long { max-height: 9em; overflow: hidden; }
 .msg.bot { max-width: 100%; display: flex; flex-direction: column; gap: var(--s3); }
@@ -263,6 +264,9 @@ svg text { font-family: var(--mono); }
   .panel { border-top: 2px solid var(--ink); padding: var(--s4) var(--s4) var(--s7); }
   .masthead { padding: var(--s2) var(--s3); gap: var(--s2); flex-wrap: wrap; }
   .masthead .tag { display: none; }
+  .session { width: 100%; }
+  .session button { white-space: nowrap; }
+  #session-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .start h1 { font-size: 30px; }
   .start .lede { font-size: 16px; }
   .composer { position: sticky; bottom: 0; padding: var(--s2) var(--s3); }
@@ -284,6 +288,7 @@ svg text { font-family: var(--mono); }
   <div class="tag">City records on any NYC rental, before you sign.</div>
   <div class="session" id="session" hidden>
     <span id="session-label" title="Click to copy the full session ID">Session —</span>
+    <button id="to-examples" title="Back to the example questions and the list of checks, in this session">Examples</button>
     <button id="copy-session" title="Copy the full session ID, to continue this chat in another browser">Copy ID</button>
     <button id="new-search">New search</button>
   </div>
@@ -460,6 +465,10 @@ async function newSearch() {
   $("input").focus();
 }
 $("new-search").onclick = newSearch;
+$("to-examples").onclick = () => {
+  $("start").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("examples-start").querySelector(".example")?.focus({ preventScroll: true });
+};
 $("home").onclick = newSearch;
 
 // ---------- Chat ----------
@@ -633,8 +642,7 @@ async function send(message) {
       if (r.ok) setSession((await r.json()).session_id);
     } catch { /* the question still goes through without the hint */ }
   }
-  $("start").hidden = true;
-  $("first-load").hidden = true;
+  $("first-load").hidden = true;  // the start screen stays above the chat: its cards still send into this session
   addUser(message);
   $("input").value = ""; autosize();
   setBusy(true);
@@ -1192,7 +1200,6 @@ function restore(view) {
   fileOrder = []; shownAddress = null; leaseResult = null; letterResult = null;
   setSession(view.session_id);
   const turns = view.turns || [];
-  $("start").hidden = turns.length > 0;
   $("first-load").hidden = turns.length > 0;
   for (const t of turns) { addUser(t.user); addBot(t.assistant, t.tool_calls); absorb(t.tool_calls); }
   renderPanel();

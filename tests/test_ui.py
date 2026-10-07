@@ -284,6 +284,30 @@ def main():
         assert f"{len(sides)} sides" in card_text and all(label in card_text for label in sides), (sides, card_text[:300])
         assert page.evaluate("map.getMinZoom()") == 10 and page.evaluate("map.getZoom()") >= 10
         print(f"ok  the sunlight card shows all {len(sides)} sides with unique labels; the map stays at city zoom")
+        # 21. The README's three queries by clicking, in one session: the cards and the tool list stay reachable.
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.goto(BASE)
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=300_000) as first:
+            page.locator("#examples-start .example").nth(0).click()
+        page.wait_for_selector(".msg.bot .answer")
+        sid = page.evaluate("sessionId")
+        assert first.value.json()["session_id"] == sid
+        page.click("#to-examples")
+        page.wait_for_timeout(600)
+        assert page.locator("#examples-start .example").nth(1).is_visible(), "Examples brings the cards back into view"
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=300_000) as second:
+            page.locator("#examples-start .example").nth(1).click()
+        body = second.value.json()
+        assert body["session_id"] == sid == page.evaluate("sessionId"), "card 2 must send into the same session"
+        assert "look_up_building" not in [c["name"] for c in body["tool_calls"]], [c["name"] for c in body["tool_calls"]]
+        page.click("#capabilities summary")
+        assert page.locator("#cap-rows tr.cap-row").count() == 13, "the tool list stays reachable mid-conversation"
+        print("ok  cards 1 and 2 clicked in one session (same ID, no second lookup); the 13-tool list stays reachable")
+        mobile = browser.new_context(viewport={"width": 390, "height": 844}).new_page()
+        mobile.goto(BASE)
+        mobile.wait_for_selector("#to-examples", state="visible")
+        assert mobile.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0, "no sideways scroll at 390px"
+        print("ok  the header with Examples fits at 390px")
         browser.close()
     print("All UI tests passed.")
 
