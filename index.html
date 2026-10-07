@@ -473,6 +473,9 @@ function mathToText(s) {
     .replace(/\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)/g, (_, a, b) => plain(a ?? b))
     .replace(/(^|[^\w$\\])\$([A-Za-z\\({](?:[^$\n]{0,80}?[^\s$])?)\$(?![\w$])/g, (_, pre, m) => pre + plain(m));
 }
+// No strikethrough: tool text uses "~" for "about" ("~5 m", "~15-min"), and two of them in one line would strike
+// out everything between. The app never needs strikethrough, so the rule never matches (tildes stay literal).
+marked.use({ tokenizer: { del() { return undefined; } } });
 const md = (s) => DOMPurify.sanitize(marked.parse(mathToText(s)), { ADD_ATTR: ["target"] });
 const parse = (s) => { try { return JSON.parse(s); } catch { return { error: "Unreadable tool result" }; } };
 const fmt = (n, d = 2) => (n == null ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d }));

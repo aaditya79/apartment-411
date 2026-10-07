@@ -405,6 +405,20 @@ def main():
         maint = pg.locator(".card", has_text="Maintenance")
         assert maint.locator(".vchip").inner_text().lower() == "no record" and "isn't HPD-registered" in maint.inner_text()
         print("ok  verdict chips come only from tool comparisons (worse / better / no record), with a summary strip and a marked portfolio row")
+        # 25. "~" means "about" in tool text: two of them in one answer must not become strikethrough.
+        answer = ("Street side: about 2.8 h. Southeast side: faces a light court or shaft (~5 m to the next wall), wall 1 "
+                  "of 2; southeast side (~5 m to the next wall), wall 2 of 2. Open space ~21 m; a ~15-min walk.")
+        pg = browser.new_context().new_page()
+        pg.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"response": answer, "session_id": json.loads(r.request.post_data)["session_id"], "tool_calls": []})))
+        pg.goto(BASE)
+        pg.fill("#input", "sun"); pg.click("#send")
+        bubble = pg.locator(".msg.bot .answer")
+        bubble.wait_for()
+        assert bubble.locator("del, s").count() == 0, bubble.inner_html()
+        text = bubble.inner_text()
+        assert all(t in text for t in ("(~5 m to the next wall), wall 1 of 2", "~21 m", "~15-min")), text
+        print("ok  tildes in an answer stay literal (~5 m, ~21 m, ~15-min): no strikethrough")
         browser.close()
     print("All UI tests passed.")
 
