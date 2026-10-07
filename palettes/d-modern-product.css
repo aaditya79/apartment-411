@@ -1,0 +1,14 @@
+/* D. Modern product: cool near-white ground, soft grey-blue panels, a saturated indigo accent, lower-contrast
+   muted text, desaturated status colors. Tokens only: no radius, shadow, type or spacing changes. */
+:root {
+  --paper: #f7f8fa; --panel: #eef1f6; --surface: #ffffff;
+  --ink: #1f2430; --ink-2: #4a5163; --muted: #636a7c; --rule: #dde2ea;
+  --accent: #4f46e5; --accent-soft: #eceafd; --accent-hover: #4338ca; --on-accent: #ffffff;
+  --brand: #f2c230;
+  --flag: #b4443a; --flag-bg: #fcefee;
+  --caution: #94600e; --caution-bg: #fcf4e3;
+  --clear: #2f7a55; --clear-bg: #e8f4ed;
+  --hover-bg: #f5f5ff; --code-bg: #f8f9fc;
+  --json-key: #4338ca; --json-str: #2f7a55; --json-num: #8b3fc9; --json-lit: #b4443a;
+  --map-bg: #e3e7ee;
+}
