@@ -308,9 +308,56 @@ def main():
         mobile.wait_for_selector("#to-examples", state="visible")
         assert mobile.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0, "no sideways scroll at 390px"
         print("ok  the header with Examples fits at 390px")
+        # 22. Every card is one control: its heading, body and padding all send that card's full query, as do Enter
+        # and Space. (The chat is answered by a stub here: this checks what is sent, not the answer.)
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"response": "ok", "session_id": json.loads(r.request.post_data)["session_id"], "tool_calls": []})))
+        page.goto(BASE)
+        examples = page.evaluate("EXAMPLES")
+        cards = page.locator(".example")
+        assert cards.count() == len(examples) == 8, cards.count()
+        def expected(i):
+            return "Review my lease" if examples[i].get("lease") else examples[i]["text"]
+        def last_bubble():
+            return page.locator(".msg.user").last.inner_text()
+        for i in range(8):
+            card = page.locator(f'.example[data-i="{i}"]')
+            for where in ("heading", "padding"):
+                card.scroll_into_view_if_needed()  # each send scrolls the chat down: measure right before clicking
+                box = card.locator(".k").bounding_box() if where == "heading" else card.bounding_box()
+                n = page.locator(".msg.user").count()
+                x, y = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2) if where == "heading" else (box["x"] + 5, box["y"] + 4)
+                page.mouse.click(x, y)
+                page.wait_for_function(f"document.querySelectorAll('.msg.user').length > {n}")
+                page.wait_for_function("!busy")
+                assert last_bubble() == expected(i), (i, where, last_bubble(), expected(i))
+        for i, key in ((0, "Enter"), (3, " ")):
+            n = page.locator(".msg.user").count()
+            page.locator(f'.example[data-i="{i}"]').focus()
+            page.keyboard.press(key)
+            page.wait_for_function(f"document.querySelectorAll('.msg.user').length > {n}")
+            page.wait_for_function("!busy")
+            assert last_bubble() == expected(i), (i, key, last_bubble())
+        page.wait_for_function("!busy")
+        page.evaluate("getSelection().removeAllRanges()")  # start clean, then double-click the heading for real
+        card = page.locator('.example[data-i="0"]')
+        card.scroll_into_view_if_needed()
+        box = card.locator(".k").bounding_box()
+        page.mouse.dblclick(box["x"] + 20, box["y"] + box["height"] / 2)
+        page.wait_for_function("!busy")
+        assert page.evaluate("String(getSelection())") == "", "card text can't be selected (or dragged into the input)"
+        page.unroute("**/chat")
+        print("ok  all 8 cards send their full query from the heading, the padding, Enter and Space; card text isn't selectable")
         browser.close()
     print("All UI tests passed.")
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except BaseException:
+        traceback.print_exc()  # print it before Playwright's shutdown can swallow it
+        sys.stdout.flush(); sys.stderr.flush()
+        raise SystemExit(1)

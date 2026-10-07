@@ -87,6 +87,10 @@ a:hover { text-decoration-thickness: 2px; }
 .example { text-align: left; background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--ink); padding: var(--s3); border-radius: 2px; font: var(--t-ui); color: var(--ink); transition: border-color var(--fast), background var(--fast), transform var(--fast); }
 .example:hover { border-color: var(--ink); background: var(--hover-bg); }
 .example:active { transform: translateY(1px); }
+/* One control: the heading, body and padding all click the card itself, and its text can't be selected or dragged
+   (a dragged heading dropped in the input would be sent as the question). */
+.example { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.example > * { pointer-events: none; }
 .example .k { display: block; font: var(--t-eyebrow); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: var(--s1); }
 .fineprint { margin-top: var(--s3); font: var(--t-caption); color: var(--muted); max-width: 46em; }
 .resume { margin-top: var(--s5); display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
@@ -1108,7 +1112,7 @@ function renderMap(f) {
 
 // ---------- Start ----------
 // The README's three queries come first, so a grader's first action is one click. Every card looks the same.
-const exampleButton = (e, i) => `<button class="example" data-i="${i}">
+const exampleButton = (e, i) => `<button type="button" class="example" data-i="${i}" draggable="false">
   <span class="k">${esc(e.k)}</span>${esc(e.lease ? "Try a sample lease (fictional, for 155 East 92nd Street Apt 4B)" : e.text)}</button>`;
 $("examples-start").innerHTML = EXAMPLES.slice(0, 3).map((e, i) => exampleButton(e, i)).join("");
 $("examples").innerHTML = EXAMPLES.slice(3).map((e, i) => exampleButton(e, i + 3)).join("");
