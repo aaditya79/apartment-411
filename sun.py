@@ -300,6 +300,14 @@ class Site:
                                                   f"(~{s['open_m']:.0f} m to the next wall)")
             else:
                 s["kind"], s["label"] = "side", f"side, facing {s['direction']}"
+        # Several walls can face the same way (a light court, a jog): number them so every label is unique.
+        # Shared walls are numbered apart from window walls, since results leave them out.
+        for direction, shared in {(s["direction"], s["kind"] == "shared_wall") for s in usable}:
+            same = [s for s in usable if s["direction"] == direction and (s["kind"] == "shared_wall") == shared]
+            if len(same) > 1:
+                same.sort(key=lambda s: -s["length"])
+                for i, s in enumerate(same, 1):
+                    s["label"] += f", wall {i} of {len(same)}"
         return usable
 
     # --- Sun on one window ---

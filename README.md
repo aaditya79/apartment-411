@@ -33,7 +33,7 @@ The start screen also has example buttons for the sunlight model, the neighborho
 
 ## The tools
 
-There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. The app shows the same list under "What I can check" on the start screen, and typing `/` in the chat box opens it as a menu. Picking a check shows it as a removable chip (e.g. `/estimate_sunlight ×`) and puts its example question in the input as a grey hint. You type your own question, or send it empty to ask the example. The pick is only a hint: it's passed to the model as a note to prefer that check if it fits, and the model still decides which tools to call. Each tool:
+There are 13 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are original to this project. The app shows the same list under "What I can check" on the start screen, and typing `/` in the chat box opens it as a menu. Picking a check shows it as a removable chip (e.g. `/estimate_sunlight ×`) and puts its example question in the input as a grey hint. You type your own question, or send it empty to ask the example. The pick is only a hint: it's passed to the model as a note to prefer that check if it fits, and the model still decides which tools to call. Each tool:
 - returns JSON with interpreted facts, their context (per apartment, vs the area, over what period) and a `note` with the caveat;
 - on failure, returns `{"error", "next_step"}` telling the model what to do next, never a stack trace;
 - takes an optional address, defaulting to the building being discussed, which the harness keeps in session state, so the model never handles city IDs.
@@ -51,6 +51,7 @@ There are 12 tools in [`tools.py`](tools.py). ⭐ marks the six I believe are or
 | ⭐ `estimate_sunlight` | How much direct sun does this window get? Details below. | DOB building footprints, NOAA sun position, GeoSearch |
 | ⭐ `fact_check_listing` | Checks a listing's claims against city records: supported, partly supported, not supported, or can't verify. Details below. | Calls the tools above, plus 311 noise complaints |
 | ⭐ `review_lease` | Reviews an uploaded or pasted lease against verified NY/NYC rules and city records. Details below. | NY/NYC law (official pages), HPD, Health Dept. |
+| `tenant_rules` | What does NY/NYC law say about heat, security deposits, late fees, application and broker fees, and required lease disclosures? Returns only rules verified against an official page, each with its link, so general rights answers quote those figures instead of the model's memory. | NY/NYC law and HPD pages (the same verified set the lease review uses) |
 | ⭐ `night_walk_check` | What does the walk home from the subway look like at night in the records? Details below. | NYPD complaints (current and historic), NYPD shootings, MTA stations, snapshot |
 
 More detail on the original tools:
@@ -73,7 +74,7 @@ Tools are plain functions with JSON schemas, following the class's harness: [`ap
 
 ```
 app.py              harness, session store, FastAPI: /chat, /upload, /sample-lease, /session, /clear
-tools.py            the 12 tools, their JSON schemas, run_tool() (never raises)
+tools.py            the 13 tools, their JSON schemas, run_tool() (never raises)
 nyc.py              data layer: Socrata client with retries and cache, checked geocoding, resolve_building()
 sun.py              sun position, footprint ray-casting, street-side detection, uncertainty ensemble
 lease.py            lease text extraction and NY/NYC rules (each with the official URL it was verified on)

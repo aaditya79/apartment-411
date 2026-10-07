@@ -90,8 +90,8 @@ def main():
         served = page.request.get(f"{BASE}/tools").json()
         page.click("#capabilities summary")
         rows = page.locator("#cap-rows tr.cap-row")
-        assert rows.count() == len(served) == 12, rows.count()
-        listed = [page.locator("#cap-rows tr.cap-row .fn").nth(i).inner_text().rstrip("()") for i in range(12)]
+        assert rows.count() == len(served) == 13, rows.count()
+        listed = [page.locator("#cap-rows tr.cap-row .fn").nth(i).inner_text().rstrip("()") for i in range(13)]
         assert listed == [t["name"] for t in served], listed
         sun = next(i for i, t in enumerate(served) if t["name"] == "estimate_sunlight")
         rows.nth(sun).click()
@@ -99,14 +99,14 @@ def main():
         assert page.inner_text("#tool-chip").startswith("/estimate_sunlight") and not chats
         page.click("#tool-chip .chip-x")  # × clears the chip and the hint
         assert page.is_hidden("#tool-chip") and page.get_attribute("#input", "placeholder") != served[sun]["example"]
-        print("ok  'What I can check' lists exactly the 12 tools; a row picks the check (empty input, example as hint); × clears it")
+        print("ok  'What I can check' lists exactly the 13 tools; a row picks the check (empty input, example as hint); × clears it")
 
         # 9. The / menu opens, filters, and picking selects the check: empty input, example as placeholder, nothing sent.
         page.type("#input", "/")
         page.wait_for_selector("#slash button")
-        assert page.locator("#slash button").count() == 12
+        assert page.locator("#slash button").count() == 13
         page.type("#input", "sun")
-        assert 1 <= page.locator("#slash button").count() < 12
+        assert 1 <= page.locator("#slash button").count() < 13
         assert "Sunlight" in page.locator("#slash button").first.inner_text(), "name matches rank first"
         page.locator("#slash button").first.click()
         assert page.input_value("#input") == "" and page.get_attribute("#input", "placeholder") == served[sun]["example"]
