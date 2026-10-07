@@ -217,6 +217,73 @@ def main():
                  for i in range(cards.count())]
         assert len(listed) == 3 and shown == listed, (shown, listed)
         print("ok  README sample queries match the start cards word for word")
+        # 17. Attach and send at once: the message waits for the upload, and review_lease gets the lease first time.
+        from tests.make_pdf import text_to_pdf
+        big = Path(__file__).parent.parent / "scratch" / "padded_sample_lease.pdf"
+        big.parent.mkdir(exist_ok=True)
+        big.write_bytes(text_to_pdf(SAMPLE.read_text(), "[FICTIONAL SAMPLE — not a real lease]", "[FICTIONAL SAMPLE — not a real lease]",
+                                    padding_bytes=8_000_000))
+        page = browser.new_context().new_page()
+        page.goto(BASE)
+        page.set_input_files("#file", str(big))
+        page.fill("#input", "look through the attached lease")
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=240_000) as reply:
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#attach-chip >> text=message will send", timeout=10_000)  # held, and said so
+            assert page.input_value("#input") == "look through the attached lease", "the typed text stays while held"
+        reviews = [json.loads(c["result"]) for c in reply.value.json()["tool_calls"] if c["name"] == "review_lease"]
+        assert reviews and all("error" not in r for r in reviews), reviews
+        assert page.locator(".msg.user").count() == 1, "one send, not a failed one and a resend"
+        page.wait_for_selector("#attach-chip >> text=Lease attached")
+        print("ok  a send right after choosing a file waits for the upload; review_lease gets the lease first time")
+        # 18. A sent message appears exactly once; Enter mid-composition (dictation, predictive text) doesn't send.
+        page = browser.new_context().new_page()
+        page.goto(BASE)
+        sent = []
+        page.on("request", lambda r: r.url.endswith("/chat") and sent.append(json.loads(r.post_data)["message"]))
+        cdp = page.context.new_cdp_session(page)
+        page.click("#input")
+        page.keyboard.type("is the area ")
+        cdp.send("Input.imeSetComposition", {"text": "safe", "selectionStart": 4, "selectionEnd": 4})
+        page.keyboard.press("Enter")
+        cdp.send("Input.insertText", {"text": "safe"})
+        page.wait_for_timeout(400)
+        # (A real IME consumes that Enter; the simulated one also types a newline, which send() trims.)
+        assert not sent and page.input_value("#input").strip() == "is the area safe", (sent, page.input_value("#input"))
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=240_000):
+            page.keyboard.press("Enter")
+        assert sent == ["is the area safe"] and page.locator(".msg.user").all_inner_texts() == ["is the area safe"], sent
+        print("ok  a message appears exactly once in its bubble; Enter while composing doesn't send")
+        # 19. Two buildings in one turn: each paired row shows its own building and figures.
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.goto(BASE)
+        page.fill("#input", "compare 155 East 92nd Street and 2053 Frederick Douglass Blvd")
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=300_000) as reply:
+            page.click("#send")
+        page.wait_for_selector(".msg.bot .answer")
+        rows = {}
+        for d in page.locator("details.call").all():
+            rows.setdefault(d.locator(".fn").inner_text(), []).append(d.locator(".gist").inner_text())
+        paired = {k: v for k, v in rows.items() if len(v) > 1 and k != "look_up_building()"}
+        assert paired, rows
+        for name, gists in paired.items():
+            ok = [g for g in gists if not g.startswith("error")]
+            assert len(set(ok)) == len(ok), (name, gists)
+            assert all(" — " in g for g in ok), (name, gists)  # the building is named on each row
+        print(f"ok  a two-building comparison shows distinct, labelled rows: {paired}")
+        # 20. The sunlight card shows every side the tool returned, and the map keeps one copy of the world.
+        page = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        page.goto(BASE)
+        page.fill("#input", "how much sun does the 2nd floor of 2053 Frederick Douglass Blvd get")
+        with page.expect_response(lambda r: r.url.endswith("/chat"), timeout=300_000) as reply:
+            page.click("#send")
+        page.wait_for_selector(".card:has-text('Direct sun')")
+        suns = [json.loads(c["result"]) for c in reply.value.json()["tool_calls"] if c["name"] == "estimate_sunlight"]
+        sides = [x["side"] for x in next(r for r in suns if r.get("sides"))["sides"]]
+        card_text = page.locator(".card:has-text('Direct sun')").text_content()  # as written, not as CSS uppercases it
+        assert f"{len(sides)} sides" in card_text and all(label in card_text for label in sides), (sides, card_text[:300])
+        assert page.evaluate("map.getMinZoom()") == 10 and page.evaluate("map.getZoom()") >= 10
+        print(f"ok  the sunlight card shows all {len(sides)} sides with unique labels; the map stays at city zoom")
         browser.close()
     print("All UI tests passed.")
 

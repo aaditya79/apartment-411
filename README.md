@@ -25,7 +25,7 @@ Run these three in order, in one session. They're the first three cards on the s
 3. **Fact-check a listing** "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?"
 
 What to expect:
-- **Query 1** runs seven tools: the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It answers with a verdict, red flags, green flags and questions to ask.
+- **Query 1** runs seven tools: the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It opens with the most important finding and its comparison (no overall score), then red flags, green flags and questions to ask.
 - **Query 2** reuses the landlord portfolio: the head officer is registered on 18 buildings, and this one ranks 4th worst of the 15 with 6+ apartments.
 - **Query 3** fact-checks the two claims. "Well-maintained" is not supported by city records: 9 open violations, one immediately hazardous, one open since 2009. "Sun-drenched" can't be verified: the 4th floor's south-facing street side gets about 2.8 h of direct sun today, the court side much less, so it depends which way the apartment faces.
 

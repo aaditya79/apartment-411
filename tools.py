@@ -46,8 +46,13 @@ CERTIFICATION_NOTE = ("'Open' means HPD has no record of the repair being certif
                       "are fixed but never certified by the owner.")
 
 
-def current_building(address: str | None, state: dict) -> nyc.Building:
-    """The building a tool should look at: the one named, else the one being discussed."""
+def current_building(address: str | None, state: dict, single_building_tool: bool = False) -> nyc.Building:
+    """The building a tool should look at: the one named, else the one being discussed.
+
+    When this turn has already looked up several buildings (a comparison), a call without an address is
+    ambiguous, and silently using the last one gives the wrong building's data: it's refused instead.
+    Tools that take no address argument (single_building_tool) keep using the building being discussed.
+    """
     if address:
         try:
             building = nyc.resolve_building(address)
@@ -58,12 +63,20 @@ def current_building(address: str | None, state: dict) -> nyc.Building:
         state.setdefault("buildings", {})[building.bbl] = building
         state["current_bbl"] = building.bbl
         state.pop("unresolved_address", None)
+        turn = state.setdefault("_turn_bbls", [])
+        if building.bbl not in turn:
+            turn.append(building.bbl)
         return building
     if state.get("unresolved_address"):
         # The user just named a different address: never answer about the previous building instead.
         raise ToolError(f"The user just named {state['unresolved_address']}, which hasn't been looked up yet.",
                         "Call look_up_building with that address first (or pass the address explicitly), then "
                         "call this tool again.")
+    turn = state.get("_turn_bbls", [])
+    if len(turn) > 1 and not single_building_tool:
+        labels = ", ".join(state["buildings"][t].label for t in turn)
+        raise ToolError(f"This turn covers {len(turn)} buildings ({labels}), so a call without an address is ambiguous.",
+                        "Call this tool again with the address argument, once for each building.")
     bbl = state.get("current_bbl")
     if not bbl:
         raise NO_BUILDING
@@ -531,8 +544,10 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
 
     return {
         "address": b.label,
-        "owner": {"name": nyc.contact_name(person), "registered_role": person.get("type"),
-                  "on_this_building_as": "registered " + person.get("type", "contact")},
+        # A registered contact, not necessarily the owner: report the role as registered.
+        "registered_person": {"name": nyc.contact_name(person), "registered_role": person.get("type"),
+                              "on_this_building_as": "registered " + person.get("type", "contact"),
+                              "ownership": "not established by these records"},
         "buildings": len(table),
         "apartments": total_units,
         "open_violations": total_open,
@@ -550,9 +565,11 @@ def get_landlord_portfolio(state: dict, address: str | None = None) -> dict:
                          "registrations also share the business address"),
         "source": (f"open violations from the snapshot as of {snap.get('as_of', {}).get('open_violations_by_bbl')} "
                    "(this building: live); evictions and HPD cases live"),
-        "note": ("Matched by the person's name on HPD registrations, so a different person with the same name "
-                 "could be included, and related LLCs run by other officers are missed: the portfolio may be "
-                 "incomplete. Records only; they say nothing about intent."),
+        "note": ("These are buildings where this person is a registered contact (e.g. head officer) on HPD "
+                 "registrations; a head officer can be an employee or agent of the owner or management company, so "
+                 "report the role as registered, not as ownership. Matched by the person's name, so a different "
+                 "person with the same name could be included, and related LLCs run by other officers are missed: "
+                 "the portfolio may be incomplete. Records only; they say nothing about intent."),
     }
 
 
@@ -770,7 +787,7 @@ def issues_seen_here(b: nyc.Building) -> list[str]:
 
 def draft_repair_request(state: dict, issues: list[str], details: str | None = None, apartment: str | None = None,
                          tenant_name: str | None = None) -> dict:
-    b = current_building(None, state)
+    b = current_building(None, state, single_building_tool=True)
     # The letter is the tenant's own account, signed and sent by them. Its conditions come only from what
     # they said in this chat, never from building records (which may be about other apartments).
     said = " ".join(state.get("user_messages", []))
@@ -1121,6 +1138,12 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
                     f"apartment): {classes['C']['count']} class C (immediately hazardous), {classes['B']['count']} "
                     f"class B (hazardous), {classes['A']['count']} class A"
                     + (f"; the oldest has been open {longest} days." if longest else "."))
+        try:  # the same rate for nearby rentals, so the evidence carries its comparison
+            area = run("get_neighborhood_context", get_neighborhood_context).get("open_violations_per_apartment", {})
+            if area.get("area_median") is not None:
+                evidence += f" Nearby rentals: a median of {area['area_median']} open violations per apartment."
+        except (ToolError, DataSourceError):
+            pass
         bad = m["open_by_class"]["C"]["count"] or longest > 365
         if claim == "unit_condition":
             # 'Pristine' or 'renovated' describes the unit; building records can only partly support it.
@@ -1229,10 +1252,10 @@ def fact_check_listing(state: dict, listing_text: str, floor=None) -> dict:
             if not state.get("current_bbl"):
                 raise ToolError(f"Couldn't look up the address in the listing ('{found_address}').",
                                 "Ask the user for the building's full address with borough.")
-            b = current_building(None, state)
+            b = current_building(None, state, single_building_tool=True)
             found_address = None
     else:
-        b = current_building(None, state)  # raises NO_BUILDING if nothing is selected yet
+        b = current_building(None, state, single_building_tool=True)  # raises NO_BUILDING if nothing is selected yet
 
     floor = floor if floor not in (None, "") else floor_from_text(text)
     floor = int(floor) if floor is not None and str(floor).isdigit() else None

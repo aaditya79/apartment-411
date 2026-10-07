@@ -181,6 +181,21 @@ def test_tenant_rules_are_the_verified_set():
     assert {x["key"] for x in r["rules"]} >= {"deposit_cap", "deposit_return", "late_fee", "heat_minimums"}
 
 
+def test_no_address_call_is_refused_when_a_turn_covers_two_buildings():
+    state = {"_turn_bbls": []}
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+    run_tool("look_up_building", {"address": "2053 Frederick Douglass Blvd, Manhattan"}, state)
+    r = json.loads(run_tool("check_maintenance_record", {}, state))
+    assert "ambiguous" in r.get("error", "") and "address argument" in r["next_step"], r
+    a = json.loads(run_tool("check_maintenance_record", {"address": "155 East 92nd Street, Manhattan"}, state))
+    b = json.loads(run_tool("check_maintenance_record", {"address": "2053 Frederick Douglass Blvd, Manhattan"}, state))
+    assert a["address"] == "155 East 92 Street" and b["address"] == "2053 Frederick Douglass Boulevard", (a, b)
+    # A new turn with one building: address-less follow-ups work as before.
+    state["_turn_bbls"] = []
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+    assert "error" not in json.loads(run_tool("check_pests", {}, state))
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

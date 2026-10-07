@@ -517,13 +517,15 @@ function toolCards(calls) {
   wrap.className = "calls";
   wrap.innerHTML = `<div class="calls-head">${calls.length} tool call${calls.length > 1 ? "s" : ""} · open one to see its arguments and result<button class="jump" type="button">building file ↓</button></div>`;
   wrap.querySelector(".jump").onclick = () => $("panel").scrollIntoView({ behavior: "smooth" });
+  const addresses = new Set(calls.map((c) => parse(c.result).address).filter(Boolean));
   for (const c of calls) {
     const r = parse(c.result);
+    const where = addresses.size > 1 && r.address ? `${r.address} — ` : "";
     const d = document.createElement("details");
     d.className = "call" + (r.error ? " err" : "");
     const block = (title, value) => `<div class="bar"><h5>${title}</h5><button type="button" class="copy-btn">Copy</button></div>
       <pre data-json="${esc(JSON.stringify(value, null, 2))}">${jsonHtml(value)}</pre>`;
-    d.innerHTML = `<summary><span class="name">${esc(TOOL_LABELS[c.name] || c.name)}</span><span class="fn">${esc(c.name)}()</span><span class="gist">${esc(gist(c.name, r))}</span></summary>
+    d.innerHTML = `<summary><span class="name">${esc(TOOL_LABELS[c.name] || c.name)}</span><span class="fn">${esc(c.name)}()</span><span class="gist">${esc(where + gist(c.name, r))}</span></summary>
       <div class="body">${block("Arguments", c.args)}${block("Result", r)}</div>`;
     d.querySelectorAll(".copy-btn").forEach((b) => (b.onclick = async () => {
       const text = b.closest(".bar").nextElementSibling.dataset.json;
@@ -609,6 +611,12 @@ function setBusy(on) {
 }
 
 async function send(message) {
+  if (uploading) {
+    // The user has committed: hold the message (it stays in the input) and send it once the file is on the server.
+    queuedMessage = message;
+    uploading.note("your message will send when it's ready");
+    return;
+  }
   message = message.trim();
   if (!message && pickedTool) message = pickedTool.example;  // empty send with a picked check: ask its example
   if (!message && leaseAttached && !leaseReviewed) message = "Review my lease";  // "press send to review"
@@ -654,6 +662,7 @@ function autosize() { input.style.height = "auto"; input.style.height = Math.min
 input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (slashKey(e)) return;  // the / menu is open: arrows, Enter and Esc belong to it
+  if (e.isComposing || e.keyCode === 229) return;  // the input method is still composing: let it finish
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input.value); }
 });
 $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(input.value); });
@@ -671,15 +680,17 @@ function updatePlaceholder() {
   autosize();
 }
 let leaseAttached = false, leaseReviewed = false;
-function showLease(name, error) {
+function showLease(name, error, canRetry) {
   const chip = $("attach-chip");
   leaseAttached = Boolean(name) && !error;
   chip.classList.toggle("error", Boolean(error));
   if (!name && !error) { chip.style.display = "none"; chip.innerHTML = ""; updatePlaceholder(); return; }
   chip.style.display = "flex";
-  chip.innerHTML = error ? `<span>⚠ ${esc(error)}</span><button type="button" class="chip-x" aria-label="Dismiss">×</button>`
+  chip.innerHTML = error ? `<span>⚠ ${esc(error)}</span>${canRetry && lastFile ? `<button type="button" class="btn-ghost retry-upload">Retry</button>` : ""}<button type="button" class="chip-x" aria-label="Dismiss">×</button>`
     : `<span>📎 Lease attached: ${esc(name)}</span><button type="button" class="chip-x" title="Remove the lease" aria-label="Remove the lease">×</button>`;
   chip.querySelector(".chip-x").onclick = error ? () => showLease(null) : removeLease;
+  const retry = chip.querySelector(".retry-upload");
+  if (retry) retry.onclick = () => uploadFile(lastFile);
   updatePlaceholder();
 }
 async function removeLease() {
@@ -688,32 +699,68 @@ async function removeLease() {
   showLease(null);
   input.focus();
 }
-$("file").onchange = async () => {
-  const f = $("file").files[0];
-  $("file").value = "";
-  if (!f) return;
+// An upload in flight: { note(text) }. A send meanwhile is held in queuedMessage and sent when it lands.
+let uploading = null, queuedMessage = null, lastFile = null;
+function chipStatus(text, note) {
+  const chip = $("attach-chip");
+  chip.style.display = "flex"; chip.classList.remove("error");
+  chip.innerHTML = `<span class="attaching">${esc(text)}${note ? ` · ${esc(note)}` : ""}</span>`;
+}
+function postWithProgress(form, onProgress) {
+  // XMLHttpRequest, not fetch: it reports upload progress.
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/upload");
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.upload.onload = () => onProgress(1);
+    x.onload = () => {
+      let body; try { body = JSON.parse(x.responseText); } catch { body = { error: `Upload failed (HTTP ${x.status}).` }; }
+      resolve({ ok: x.status >= 200 && x.status < 300, body });
+    };
+    x.onerror = () => reject(new Error("the connection dropped"));
+    x.send(form);
+  });
+}
+async function uploadFile(f) {
+  lastFile = f;
   const MAX = 20 * 1024 * 1024;  // keep in step with lease.MAX_UPLOAD_BYTES
   if (f.size > MAX) {  // say so before uploading 30 MB for nothing
     showLease(null, `That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 20.0 MB. Upload a smaller copy or paste the lease text.`);
     return;
   }
-  const chip = $("attach-chip");
-  chip.style.display = "flex"; chip.classList.remove("error");
-  chip.innerHTML = `<span>Uploading ${esc(f.name)}…</span>`;
+  leaseAttached = false;
+  let note = "", label = `Attaching ${f.name}…`;
+  uploading = { note: (text) => { note = text; chipStatus(label, note); } };
+  chipStatus(label);
   const form = new FormData();
   form.append("file", f);
   if (sessionId) form.append("session_id", sessionId);
+  let failed = null;
   try {
-    const r = await fetch("/upload", { method: "POST", body: form });
-    const body = await r.json().catch(() => ({ error: `Upload failed (HTTP ${r.status}).` }));
-    setSession(body.session_id);
-    if (!r.ok) { showLease(null, body.error || "Upload failed"); return; }
-    leaseReviewed = false;
-    showLease(body.name || f.name);
-    input.focus();  // nothing is sent: the user decides what to ask
+    const { ok, body } = await postWithProgress(form, (share) => {
+      // Sent: the server is now reading the text out of the file, which takes a few seconds for a big PDF.
+      label = share >= 1 ? `Reading ${f.name}…` : `Attaching ${f.name}… ${Math.round(share * 100)}%`;
+      chipStatus(label, note);
+    });
+    if (body.session_id) setSession(body.session_id);
+    if (!ok) failed = body.error || "Upload failed";
+    else { leaseReviewed = false; showLease(body.name || f.name); }
   } catch (e) {
-    showLease(null, "Upload failed: " + e.message);
+    failed = "Upload failed: " + e.message;
   }
+  uploading = null;
+  if (failed) {
+    queuedMessage = null;  // nothing is sent without its file; the typed text is still in the input
+    showLease(null, failed, true);
+    return;
+  }
+  if (queuedMessage !== null) { const m = queuedMessage; queuedMessage = null; send(m); }
+  else input.focus();  // nothing is sent: the user decides what to ask
+}
+$("file").onchange = () => {
+  const f = $("file").files[0];
+  $("file").value = "";
+  if (f) uploadFile(f);
 };
 async function trySampleLease() {
   if (busy) return;
@@ -859,7 +906,8 @@ function cardCourt(f) {
 
 function cardLandlord(f) {
   const r = f.get_landlord_portfolio; if (!r) return "";
-  return card(`Landlord · ${esc(r.owner?.name)} (${esc(r.owner?.registered_role)})`,
+  const person = r.registered_person || r.owner;  // older sessions used "owner"
+  return card(`Registered ${esc(person?.registered_role)} · ${esc(person?.name)}`,
     `<div class="big">${r.buildings} <small>buildings · ${fmt(r.apartments, 0)} apts</small></div>
      <div class="vs">Portfolio: ${fmt(r.portfolio_per_apartment)} open violations/apt · this building ${fmt(r.this_building?.per_apartment)} (${esc(r.this_building?.rank_worst_first || "unranked")})</div>
      <div class="vs">${r.evictions_since_2023} evictions and ${r.hpd_cases_since_2023} HPD cases across the portfolio since 2023</div>
@@ -897,10 +945,10 @@ function sunChart(side) {
 
 function cardSun(f) {
   const r = f.estimate_sunlight; if (!r || !r.sides) return "";
-  const sides = r.sides.slice(0, 4).map((s) => `<div style="margin-top:8px"><div class="vs"><b>${esc(s.side)}</b></div>
+  const sides = r.sides.map((s) => `<div style="margin-top:8px"><div class="vs"><b>${esc(s.side)}</b></div>
     <div class="vs mono" style="font-size:12px">Today: ${esc(s.sun.today)}</div>${sunChart(s)}
     ${s.main_blocker_today ? `<div class="vs" style="font-size:12px">Main blocker today: ${esc(s.main_blocker_today.address || "a building")} (${s.main_blocker_today.height_ft} ft, ${s.main_blocker_today.distance_m} m ${esc(s.main_blocker_today.direction)})</div>` : ""}</div>`).join("");
-  return card(`Direct sun · floor ${r.floor} of ${r.floors_in_building}`,
+  return card(`Direct sun · floor ${r.floor} of ${r.floors_in_building} · ${r.sides.length} side${r.sides.length === 1 ? "" : "s"}`,
     `<div class="vs">Median hours of direct sun, with the uncertainty range (bars), per side of the building.</div>${sides}`,
     "Direct sun only: reflected light isn't counted. Ranges vary floor height, window position and neighbors' heights (a sensitivity analysis).", true);
 }
@@ -981,9 +1029,11 @@ function renderMap(f) {
   if (!center) { $("map").style.display = "none"; $("map-legend").innerHTML = ""; return; }
   $("map").style.display = "block";
   if (!map) {
-    map = L.map("map", { scrollWheelZoom: false, zoomControl: false });
+    // NYC only: no zooming out to repeated copies of the world.
+    map = L.map("map", { scrollWheelZoom: false, zoomControl: false, minZoom: 10, worldCopyJump: false,
+                         maxBounds: [[40.35, -74.45], [41.05, -73.5]], maxBoundsViscosity: 1.0 });
     L.control.zoom({ position: "bottomleft" }).addTo(map);  // keeps the top corners free for station labels
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, minZoom: 10, noWrap: true, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
     // Turning on the landlord's buildings zooms out to show them all.
     map.on("overlayadd", (e) => { if (e.name.startsWith("Landlord")) map.fitBounds(L.featureGroup(e.layer.getLayers()).getBounds().pad(0.2)); });
   }
