@@ -202,7 +202,7 @@ details.call[open] > summary::before { transform: rotate(90deg); color: var(--in
 .attach-chip .chip-x { border: 0; background: var(--ink); color: var(--paper); width: 22px; height: 22px; line-height: 22px; border-radius: 2px; font: 600 14px var(--mono); flex: none; transition: background var(--fast); }
 .attach-chip .chip-x:hover { background: var(--flag); }
 .tool-chip { display: flex; background: var(--accent); color: var(--on-accent); border-color: var(--ink); }
-.tool-chip[hidden] { display: none; }
+[hidden] { display: none !important; }  /* hidden always hides, whatever display a class sets */
 .tool-chip .chip-x { background: var(--surface); color: var(--ink); }
 .tool-chip .chip-x:hover { background: var(--ink); color: var(--surface); }
 .composer-row { display: flex; gap: var(--s2); align-items: flex-end; }
@@ -873,7 +873,9 @@ function renderSummary(f) {
     ? `rats: ${p.rodent_inspections_since_2023.failed_for_rats} of ${p.rodent_inspections_since_2023.inspections} inspections failed` : "rats: no inspections on record"]);
   const differs = items.filter(([v]) => v === "worse" || v === "better").sort((a, b) => (a[0] === "worse" ? -1 : 1) - (b[0] === "worse" ? -1 : 1)).slice(0, 3);
   const compared = items.filter(([v]) => v && v !== "none");
+  // Only real area verdicts: with no comparison run yet, the strip shows nothing (never a default verdict).
   strip.hidden = !compared.length;
+  if (!compared.length) { strip.innerHTML = ""; return; }
   strip.innerHTML = differs.length
     ? differs.map(([v, text]) => `<span class="sitem">${vchip(v)}<span>${esc(text)}</span></span>`).join("")
     : `<span class="sitem">${vchip("average")}<span>about average on every area comparison</span></span>`;

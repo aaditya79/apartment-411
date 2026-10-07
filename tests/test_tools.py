@@ -232,6 +232,15 @@ def test_staten_island_addresses():
     assert "not Staten Island" in r["error"] and "ZIP code" in r["error"], r
 
 
+def test_walk_counts_always_carry_their_window():
+    calls = [{"name": "night_walk_check", "result": json.dumps({"window": "9pm–5am, in the 12 months to 2026-06-30"})}]
+    out = app.with_walk_windows("The shortest walk (~5 minutes, 1 reported incident) is from 96 St.", calls, [])
+    assert "1 reported incident (9pm–5am, in the 12 months to 2026-06-30)" in out, out
+    already = "1 reported incident (9pm–5am, in the 12 months to 2026-06-30) (1 robbery)."
+    assert app.with_walk_windows(already, calls, []) == already
+    assert app.with_walk_windows("3 reported incidents", [], []) == "3 reported incidents"  # no walk this turn
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

@@ -262,6 +262,29 @@ def call_key(call) -> str:
     return call.function.name.strip() + json.dumps(args, sort_keys=True)
 
 
+def with_walk_windows(answer: str, tool_calls: list[dict], messages: list[dict]) -> str:
+    """A night-walk count never appears without its period: a bare "N reported incident(s)" gets the window the
+    tool used (all walks in a turn share it). The model is told to copy incidents_phrase; this covers the times it
+    doesn't."""
+    window = None
+    for call in tool_calls:
+        if call.get("name") != "night_walk_check":
+            continue
+        try:
+            r = json.loads(call["result"])
+        except (ValueError, KeyError):
+            continue
+        window = r.get("window") or next((w.get("window") for w in r.get("walks", []) if w.get("window")), None)
+        if window:
+            break
+    if not window or not answer:
+        return answer
+    fixed = re.sub(r"\b(\d+ reported incidents?)(?!\s*\()", rf"\1 ({window})", answer)
+    if fixed != answer and messages and messages[-1].get("role") == "assistant":
+        messages[-1]["content"] = fixed
+    return fixed
+
+
 def with_instruction_notes(answer: str, tool_calls: list[dict], messages: list[dict]) -> str:
     """If a listing or lease contained an instruction aimed at the assistant, the answer always says it was
     found and ignored: the tool's own note goes first when the model left it out."""
@@ -461,6 +484,7 @@ def chat(request: ChatRequest, response: Response, http: Request, a411_session: 
         try:
             answer, tool_calls = run_agent(session["messages"], session["state"])
             answer = with_instruction_notes(answer, tool_calls, session["messages"])
+            answer = with_walk_windows(answer, tool_calls, session["messages"])
         except Exception as e:
             # Auth, billing, a model that is not running: show it in the chat, not as a 500.
             answer, tool_calls = f"Model call failed: {type(e).__name__}: {str(e)[:300]}", []

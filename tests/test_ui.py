@@ -419,6 +419,26 @@ def main():
         text = bubble.inner_text()
         assert all(t in text for t in ("(~5 m to the next wall), wall 1 of 2", "~21 m", "~15-min")), text
         print("ok  tildes in an answer stay literal (~5 m, ~21 m, ~15-min): no strikethrough")
+        # 26. No comparison, no verdict: the fact-check path alone (no neighborhood comparison) shows no summary strip
+        # and no chips, and `hidden` always hides (a class's display can't override it).
+        st, fc_calls = {}, []
+        for name, args in [("look_up_building", {"address": "155 East 92nd Street, Manhattan"}),
+                           ("fact_check_listing", {"listing_text": "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street."}),
+                           ("check_maintenance_record", {}), ("estimate_sunlight", {"floor": "4"})]:
+            fc_calls.append({"name": name, "args": args, "result": _run_tool(name, args, st)})
+        pg = browser.new_context(viewport={"width": 1280, "height": 900}).new_page()
+        pg.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"response": "ok", "session_id": json.loads(r.request.post_data)["session_id"], "tool_calls": fc_calls})))
+        pg.goto(BASE)
+        pg.locator('.example[data-i="2"]').click()  # "Fact-check a listing", the first action
+        pg.wait_for_selector("#panel .card")
+        assert not pg.is_visible("#summary-strip"), "no area comparison was run: no summary strip"
+        assert pg.locator("#summary-strip").inner_text().strip() == "" and pg.locator("#summary-strip .vchip").count() == 0
+        assert pg.locator("#panel .vchip").count() == 0, [t for t in pg.locator("#panel .vchip").all_inner_texts()]
+        assert "about average" not in pg.inner_text("#panel").lower()
+        for sel in ("#tool-chip", "#slash", "#resume-error"):
+            assert pg.evaluate(f"getComputedStyle(document.querySelector('{sel}')).display") == "none", sel
+        print("ok  with no area comparison (fact-check path only) the panel shows no summary strip and no verdict chips")
         browser.close()
     print("All UI tests passed.")
 

@@ -79,7 +79,7 @@ More detail on the original tools:
   - It labels the review by the address in the document, never the building from the conversation, and says so when the two differ. Instructions addressed to an AI inside the lease are removed and noted, as in the fact-check.
 - **`night_walk_check`** counts reported robberies, felony assaults, sex crimes, thefts from a person and shootings within ~60 m of the station-to-door line at night.
   - With no line named it checks every station within a 15-minute walk (up to 6); with a line, the nearest station on it.
-  - Each walk carries a ready-made `incidents_phrase` (count plus its window, e.g. "2 reported incidents (9pm–5am, in the 12 months to 2026-06-30)"), which the model copies, so a count never appears without its period.
+  - Each walk carries a ready-made `incidents_phrase` (count plus its window, e.g. "2 reported incidents (9pm–5am, in the 12 months to 2026-06-30)"), which the model copies; if an answer still states a bare count, the app adds the tool's window to it, so a count never appears without its period.
   - It compares the result with about 4,000 same-length walks from every NYC station.
   - It never selects or mentions victim or suspect details.
 
@@ -98,7 +98,7 @@ The building file (right):
 - **Map:** the building, nearby rentals colored by open violations per apartment, the landlord's other buildings, and night walks (Okabe-Ito colorblind-safe routes, with incidents in a distinct red). It stays within NYC.
 - **Scorecards:** each leads with its number stated with its comparison ("9 open violations — 0.31 per apartment, vs an area median of 0.07"), in one unit per concept (violations per apartment, complaints per 100 apartments).
   - **Verdict chips:** "better than area", "about average", "worse than area" or "no record", only where a tool returned an area comparison. Within 25% of the area figure counts as about average. Cards without an area comparison (evictions, the landlord portfolio, sunlight) have no chip and say so.
-  - **Summary strip:** under the heading, up to three verdicts that differ most from the area.
+  - **Summary strip:** under the heading, up to three verdicts that differ most from the area. It appears only once a tool has made an area comparison; with none, there's no strip and no chips, never a default verdict.
   - **Charts:** the portfolio shows each building's rate as a bar, with this building marked; the floor sweep and per-side sun are bar charts.
   - **Caveats:** every card keeps its caveat, in smaller type.
 - **Design:** black ink and one yellow, used only for things to act on; grey for inert surfaces; red, amber and green for data verdicts only. Every text color meets 4.5:1 contrast (`python3 palettes/check_unified.py` measures it). It works down to 390 px wide, and every control has a visible focus ring.
