@@ -253,10 +253,29 @@ details.call[open] > summary::before { transform: rotate(90deg); color: var(--in
 .card .big { font: 600 28px/1.15 var(--mono); margin: var(--s2) 0 var(--s1); color: var(--ink); }
 .card .big small { font: 400 13px var(--sans); color: var(--ink-2); }
 .card .vs { font: var(--t-caption); color: var(--ink-2); margin-top: var(--s1); }
-.card .note { font: var(--t-caption); color: var(--muted); margin-top: var(--s3); border-top: 1px solid var(--rule); padding-top: var(--s2); }
+.card .note { font: 11.5px/1.45 var(--sans); color: var(--muted); margin-top: var(--s3); border-top: 1px dashed var(--rule); padding-top: var(--s2); }  /* caveats: kept, demoted */
+.card .k > span:first-child { min-width: 0; }
+.vchip { flex: none; font: 600 10.5px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 4px 6px; border: 1px solid; border-radius: 2px; white-space: nowrap; }
+.vchip.better { color: var(--clear); background: var(--clear-bg); border-color: var(--clear); }
+.vchip.worse { color: var(--flag); background: var(--flag-bg); border-color: var(--flag); }
+.vchip.average { color: var(--ink-2); background: var(--panel); border-color: var(--rule); }
+.vchip.none { color: var(--muted); background: transparent; border: 1px dashed var(--muted); }
+.headline { margin: var(--s2) 0 var(--s1); font: 15px/1.4 var(--sans); color: var(--ink); }  /* the numeral and its meaning in one run of text */
+.headline .num { font: 600 28px/1 var(--mono); color: var(--ink); margin-right: var(--s2); }
+.headline .what { font: 15px/1.4 var(--sans); color: var(--ink); min-width: 0; }
+.card .line { font: var(--t-ui); color: var(--ink); margin-top: var(--s1); }
+.summary-strip { display: flex; flex-direction: column; gap: var(--s1); border: 1px solid var(--ink); border-left: 3px solid var(--ink); background: var(--surface); padding: var(--s2) var(--s3); margin: var(--s3) 0; }
+.summary-strip .sitem { display: flex; align-items: center; gap: var(--s2); font: var(--t-ui); color: var(--ink); flex-wrap: wrap; }
+.card ul.plist li.prow { display: grid; grid-template-columns: minmax(0, 1fr) 40%; gap: var(--s3); align-items: center; }
+.card ul.plist li.prow.here { font-weight: 700; }
+.card ul.plist li.prow.here .pbar { background: var(--ink); }
+.prate { display: flex; align-items: center; gap: var(--s1); min-width: 0; width: 100%; }
+.pbar { display: inline-block; height: 8px; background: var(--muted); min-width: 1px; flex: none; }
+.pval { font: var(--t-data); white-space: nowrap; }
 .card ul.list { list-style: none; margin-top: var(--s2); }
 .card ul.list li { padding: var(--s2) 0; border-top: 1px solid var(--rule); display: flex; gap: var(--s3); justify-content: space-between; font: var(--t-caption); color: var(--ink); }
 .card ul.list li span:last-child { font: var(--t-data); color: var(--ink-2); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.card ul.list li span:only-child { font: var(--t-caption); color: var(--ink); text-align: left; }  /* a one-part row is a sentence */
 .walk-window { margin: var(--s2) 0 var(--s1); }
 .walk-window b { font: 600 13px var(--mono); color: var(--ink); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s2); }
@@ -390,6 +409,7 @@ svg text { font-family: var(--mono); }
     <div id="panel-body" hidden>
       <div class="tabs" id="tabs"></div>
       <div class="file-head" id="file-head"></div>
+      <div class="summary-strip" id="summary-strip" hidden></div>
       <div id="map" role="region" aria-label="Map of the building and what was checked around it" aria-describedby="map-legend map-text"></div>
       <div class="map-legend" id="map-legend"></div>
       <div id="map-text"></div>
@@ -805,6 +825,10 @@ function absorb(calls) {
   const turnWalks = {};  // address -> this turn's night walks (several when the user names several lines)
   for (const c of calls || []) {
     const r = parse(c.result);
+    if (r.error && /isn't HPD-registered/.test(r.error) && shownAddress) {
+      files[shownAddress] = files[shownAddress] || {};
+      files[shownAddress].unregistered = r.error;  // "no record" on the maintenance card, with the tool's own words
+    }
     if (r.error) continue;
     if (c.name === "night_walk_check" && r.address && !r.duplicate) {
       // One call with no line returns every walkable station in r.walks; one per line returns a single walk.
@@ -827,6 +851,26 @@ function absorb(calls) {
   renderPanel();
 }
 
+function renderSummary(f) {
+  const strip = $("summary-strip");
+  const m = f.check_maintenance_record, n = f.get_neighborhood_context, c = f.get_tenant_complaints, p = f.check_pests;
+  const items = [];
+  if (m && n?.open_violations_per_apartment) items.push([vsArea(m.open_per_apartment, n.open_violations_per_apartment.area_median),
+    `open violations ${fmt(m.open_per_apartment)} vs ${fmt(n.open_violations_per_apartment.area_median)} per apartment`]);
+  if (c && n?.all_complaints_per_100_apartments_since_2023 && complaintsPer100(c) != null) items.push([vsArea(complaintsPer100(c), n.all_complaints_per_100_apartments_since_2023.area),
+    `complaints ${fmt(complaintsPer100(c), 1)} vs ${fmt(n.all_complaints_per_100_apartments_since_2023.area, 1)} per 100 apartments`]);
+  if (n?.heat_complaints_per_100_apartments_since_2023) items.push([vsArea(n.heat_complaints_per_100_apartments_since_2023.this_building, n.heat_complaints_per_100_apartments_since_2023.area),
+    `heat complaints ${fmt(n.heat_complaints_per_100_apartments_since_2023.this_building, 1)} vs ${fmt(n.heat_complaints_per_100_apartments_since_2023.area, 1)} per 100 apartments`]);
+  if (p) items.push([ratVerdict(p, n?.rats), p.rodent_inspections_since_2023?.inspections
+    ? `rats: ${p.rodent_inspections_since_2023.failed_for_rats} of ${p.rodent_inspections_since_2023.inspections} inspections failed` : "rats: no inspections on record"]);
+  const differs = items.filter(([v]) => v === "worse" || v === "better").sort((a, b) => (a[0] === "worse" ? -1 : 1) - (b[0] === "worse" ? -1 : 1)).slice(0, 3);
+  const compared = items.filter(([v]) => v && v !== "none");
+  strip.hidden = !compared.length;
+  strip.innerHTML = differs.length
+    ? differs.map(([v, text]) => `<span class="sitem">${vchip(v)}<span>${esc(text)}</span></span>`).join("")
+    : `<span class="sitem">${vchip("average")}<span>about average on every area comparison</span></span>`;
+}
+
 function renderPanel() {
   const has = fileOrder.length > 0 || leaseResult;
   $("panel-empty").hidden = has;
@@ -839,6 +883,7 @@ function renderPanel() {
   renderMap(f);
   // The walks card is the map's text alternative, so it sits right after the map in reading order.
   $("map-text").innerHTML = cardWalk(f);
+  renderSummary(f);
   const cards = [cardMaintenance, cardComplaints, cardPests, cardCourt, cardLandlord, cardArea, cardSun, cardSweep, cardListing]
     .map((fn) => fn(f)).filter(Boolean);
   if (leaseResult && (!leaseResult.address || leaseResult.address === shownAddress)) cards.push(cardLease(leaseResult));
@@ -863,21 +908,51 @@ function renderHead(f) {
 }
 
 // ---------- Scorecards ----------
-const card = (k, body, note, wide) => `<div class="card${wide ? " wide" : ""}"><div class="k">${k}</div>${body}${note ? `<div class="note">${note}</div>` : ""}</div>`;
+const card = (k, body, note, wide, verdict) => `<div class="card${wide ? " wide" : ""}"><div class="k"><span>${k}</span>${vchip(verdict)}</div>${body}${note ? `<div class="note">${note}</div>` : ""}</div>`;
+// Verdicts against the area, only from numbers a tool returned: within 25% of the area figure is "about average".
+const VERDICT_TEXT = { better: "better than area", average: "about average", worse: "worse than area", none: "no record" };
+const vchip = (v) => (v ? `<span class="vchip ${v}">${VERDICT_TEXT[v]}</span>` : "");
+function vsArea(here, area) {
+  if (here == null || area == null) return null;
+  if (area === 0) return here === 0 ? "average" : "worse";
+  const ratio = here / area;
+  return ratio <= 0.75 ? "better" : ratio >= 1.25 ? "worse" : "average";
+}
+const plural = (n, word) => `${word}${n === 1 ? "" : "s"}`;
+// The numeral and what it means, side by side at reading weight (not a bare figure with a grey footnote).
+const headline = (num, what) => `<div class="headline">${num != null ? `<b class="num">${num}</b>` : ""}<span class="what">${what}</span></div>`;
+const RULE_NOTE = "Area verdict: within 25% of the area figure is about average.";
+function ratVerdict(r, area) {
+  const rats = r?.rodent_inspections_since_2023;
+  if (!rats || !rats.inspections) return "none";
+  if (rats.failed_for_rats) return area ? "worse" : null;
+  const share = parseInt(area?.share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023, 10);
+  return Number.isNaN(share) ? null : share >= 50 ? "better" : "average";
+}
+function complaintsPer100(r) {
+  return r.complaints_per_100_apartments ?? (r.complaints_per_apartment != null ? Math.round(r.complaints_per_apartment * 1000) / 10 : null);
+}
 
 function cardMaintenance(f) {
-  const r = f.check_maintenance_record; if (!r) return "";
+  const r = f.check_maintenance_record;
+  if (!r && f.unregistered) {
+    return card("Maintenance · open HPD violations", headline(null, "No HPD records: this building isn't HPD-registered."),
+      esc(f.unregistered), false, "none");
+  }
+  if (!r) return "";
   const c = r.open_by_class || {};
   const area = f.get_neighborhood_context?.open_violations_per_apartment;
   const oldest = (r.oldest_open || [])[0];
+  const fixed = r.fixed_since_2023 || {};
+  const what = `open ${plural(r.open_violations, "violation")} — ${fmt(r.open_per_apartment)} per apartment` +
+    (area ? `, vs an area median of ${fmt(area.area_median)}` : "");
   return card("Maintenance · open HPD violations",
-    `<div class="big">${r.open_violations} <small>open · ${fmt(r.open_per_apartment)} per apt</small></div>
-     <div class="vs">${area ? `Area median ${fmt(area.area_median)} per apt` : "Compare: ask “is that normal for the area?”"}</div>
+    `${headline(r.open_violations, what)}
      <div class="chips"><span class="chip ${c.C?.count ? "bad" : ""}">C ${c.C?.count ?? 0} immediately hazardous</span><span class="chip ${c.B?.count ? "warn" : ""}">B ${c.B?.count ?? 0} hazardous</span><span class="chip">A ${c.A?.count ?? 0}</span></div>
      <ul class="list">${oldest ? `<li><span>Oldest open: ${esc(oldest.what?.length > 70 ? oldest.what.slice(0, 68).replace(/\s+\S*$/, "") + "…" : oldest.what)}</span><span>since ${esc(oldest.open_since)}</span></li>` : ""}
-       <li><span>Median days open</span><span>${fmt(r.days_open?.median, 0)}</span></li>
-       <li><span>Fixed since 2023 (median days to close)</span><span>${r.fixed_since_2023?.count} (${fmt(r.fixed_since_2023?.median_days_to_close, 0)})</span></li></ul>`,
-    "“Open” can mean fixed but never certified.");
+       <li><span>Median time open</span><span>${r.open_violations ? `${fmt(r.days_open?.median, 0)} days` : "no open violations"}</span></li>
+       <li><span>${fixed.count ? `${fixed.count} fixed since 2023, median ${fmt(fixed.median_days_to_close, 0)} days to close` : "None fixed since 2023"}</span></li></ul>`,
+    `“Open” can mean fixed but never certified.${area ? " " + RULE_NOTE : ""}`, false, area ? vsArea(r.open_per_apartment, area.area_median) : null);
 }
 
 function barChart(entries, w = 240, h = 70) {
@@ -896,60 +971,77 @@ function barChart(entries, w = 240, h = 70) {
 
 function cardComplaints(f) {
   const r = f.get_tenant_complaints; if (!r) return "";
-  if (r.complaints == null) return card("Tenant complaints", `<div class="big">${r.complaints_since_2023 ?? "—"}</div>`, esc(r.source));
-  const area = f.get_neighborhood_context?.heat_complaints_per_100_apartments_since_2023;
+  if (r.complaints == null) return card("Tenant complaints", headline(r.complaints_since_2023 ?? "—", "complaints"), esc(r.source));
+  const all = f.get_neighborhood_context?.all_complaints_per_100_apartments_since_2023;
+  const heat = f.get_neighborhood_context?.heat_complaints_per_100_apartments_since_2023;
+  const per100 = complaintsPer100(r);
   // The latest 12 months: a full multi-year chart shrinks to an unreadable sliver (the tool result has every month).
   const months = Object.entries(r.by_month?.counts || {}).slice(-12).map(([m, n]) => [m.replace(/ 20(\d\d)/, " '$1"), n]);
   const cats = Object.entries(r.by_category || {}).slice(0, 5).map(([k, v]) => `<span class="chip">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
+  const what = `${plural(r.complaints, "complaint")} since 2023 — ` + (per100 != null
+    ? `${fmt(per100, 1)} per 100 apartments${all ? `, vs ${fmt(all.area, 1)} nearby` : ""}` : "no apartment count to compare with");
   return card("Tenant complaints to HPD · since 2023",
-    `<div class="big">${r.complaints} <small>complaints · ${r.complaints_per_100_apartments != null ? `${fmt(r.complaints_per_100_apartments, 1)} per 100 apts` : `${fmt(r.complaints_per_apartment)} per apt`}</small></div>
-     ${area ? `<div class="vs">Heat: ${fmt(area.this_building, 1)} per 100 apts here vs ${fmt(area.area, 1)} nearby</div>` : ""}
+    `${headline(r.complaints, what)}
+     ${heat ? `<div class="line">Heat &amp; hot water: ${fmt(heat.this_building, 1)} per 100 apartments, vs ${fmt(heat.area, 1)} nearby</div>` : ""}
      <div class="chips">${cats}</div>
      ${months.length ? `<div class="vs" style="margin-top:8px">${esc((r.by_month.category || "").replace(/_/g, " "))} by month${Object.keys(r.by_month.counts).length > 12 ? " (latest 12 months with complaints)" : ""}</div>${barChart(months)}` : ""}`,
-    "Counted once per complaint. “Closed” means the city closed the case.");
+    `Counted once per complaint. “Closed” means the city closed the case.${all ? " " + RULE_NOTE : ""}`, false,
+    all && per100 != null ? vsArea(per100, all.area) : null);
 }
 
 function cardPests(f) {
   const r = f.check_pests; if (!r) return "";
   const rats = r.rodent_inspections_since_2023 || {};
   const area = f.get_neighborhood_context?.rats;
+  const share = area?.share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023;
   const bugs = Array.isArray(r.bedbug_filings) ? r.bedbug_filings[0] : null;
+  const what = rats.inspections
+    ? `rat ${plural(rats.inspections, "inspection")} since 2023, ${rats.failed_for_rats} failed${share ? ` — ${esc(share)} of nearby rental lots failed one` : ""}`
+    : "rat inspections since 2023 — no record either way";
   return card("Rats & bedbugs",
-    `<div class="big">${rats.failed_for_rats}/${rats.inspections} <small>rat inspections failed since 2023</small></div>
-     <div class="vs">${rats.last_failed ? "Last failed " + esc(rats.last_failed) : "No failures"}${area ? ` · ${esc(area.share_of_nearby_rental_lots_with_a_failed_rat_inspection_since_2023)} of nearby rental lots failed one` : ""}</div>
-     <ul class="list"><li><span>Latest bedbug filing</span><span>${bugs ? `${esc(bugs.filed)}: ${bugs.infested_units} infested` : "none on file"}</span></li></ul>`,
-    r.bedbug_disclosure ? esc(r.bedbug_disclosure.split(" Source:")[0]) : "Rat inspections cover the whole lot; bedbug filings are self-reported.");
+    `${headline(rats.inspections ?? 0, what)}
+     <ul class="list">${rats.last_failed ? `<li><span>Last failed inspection</span><span>${esc(rats.last_failed)}</span></li>` : ""}
+       <li><span>Latest bedbug filing</span><span>${bugs ? `${esc(bugs.filed)}: ${bugs.infested_units} infested` : Array.isArray(r.bedbug_filings) ? "none on file" : esc(r.bedbug_filings || "none on file")}</span></li></ul>`,
+    r.bedbug_disclosure ? esc(r.bedbug_disclosure.split(" Source:")[0]) : "Rat inspections cover the whole lot; bedbug filings are self-reported. No inspections means no evidence either way.",
+    false, ratVerdict(r, area));
 }
 
 function cardCourt(f) {
   const r = f.check_evictions_and_court; if (!r) return "";
   const cases = r.hpd_court_cases || {};
+  const n = r.residential_evictions_since_2023?.count;
   return card("Evictions & housing court",
-    `<div class="big">${r.residential_evictions_since_2023?.count} <small>marshal evictions since 2023</small></div>
-     <div class="vs">${cases.since_2023} HPD court cases since 2023 · ${cases.total_on_record} on record</div>
+    `${headline(n, `marshal ${plural(n, "eviction")} since 2023 — ${cases.since_2023} HPD court ${plural(cases.since_2023, "case")} since 2023, ${cases.total_on_record} on record`)}
      <ul class="list">${(cases.recent || []).slice(0, 3).map((c) => `<li><span>${esc(c.meaning)}</span><span>${esc(c.opened)}</span></li>`).join("")}</ul>`,
-    "Evictions carried out, not cases filed.");
+    "Evictions carried out, not cases filed. No area comparison is available for these records.");
 }
 
 function cardLandlord(f) {
   const r = f.get_landlord_portfolio; if (!r) return "";
   const person = r.registered_person || r.owner;  // older sessions used "owner"
+  // The worst buildings, plus this one if it isn't among them, each rate as a bar on one scale.
+  const rows = (r.worst_buildings || []).slice(0, 5).map((b) => ({ ...b, here: b.address === r.address }));
+  if (!rows.some((b) => b.here) && r.this_building) rows.push({ address: r.address, apartments: f.look_up_building?.apartments, per_apartment: r.this_building.per_apartment, here: true });
+  const max = Math.max(...rows.map((b) => b.per_apartment || 0), 0.01);
+  const list = rows.map((b) => `<li class="prow${b.here ? " here" : ""}"><span class="paddr">${esc(b.address)}${b.apartments ? ` · ${b.apartments} apts` : ""}${b.here ? " ◀ this building" : ""}</span>
+      <span class="prate"><span class="pbar" style="width:calc((100% - 64px) * ${(b.per_apartment || 0) / max})"></span><span class="pval">${fmt(b.per_apartment)}/apt</span></span></li>`).join("");
   return card(`Registered ${esc(person?.registered_role)} · ${esc(person?.name)}`,
-    `<div class="big">${r.buildings} <small>buildings · ${fmt(r.apartments, 0)} apts</small></div>
-     <div class="vs">Portfolio: ${fmt(r.portfolio_per_apartment)} open violations/apt · this building ${fmt(r.this_building?.per_apartment)} (${esc(r.this_building?.rank_worst_first || "unranked")})</div>
-     <div class="vs">${r.evictions_since_2023} evictions and ${r.hpd_cases_since_2023} HPD cases across the portfolio since 2023</div>
-     <ul class="list">${(r.worst_buildings || []).slice(0, 5).map((b) => `<li><span>${esc(b.address)} · ${b.apartments} apts</span><span>${fmt(b.per_apartment)}/apt</span></li>`).join("")}</ul>`,
-    "Matched by name on HPD registrations: may include a namesake, and misses LLCs run by others. Toggle “Landlord's buildings” on the map.", true);
+    `${headline(r.buildings, `buildings where ${esc(person?.name)} is the registered ${esc(person?.registered_role)} — ${fmt(r.apartments, 0)} apartments`)}
+     <div class="line">Open violations per apartment: portfolio ${fmt(r.portfolio_per_apartment)}, this building ${fmt(r.this_building?.per_apartment)} (${esc(r.this_building?.rank_worst_first || "unranked")})</div>
+     <div class="line">${r.evictions_since_2023} ${plural(r.evictions_since_2023, "eviction")} and ${r.hpd_cases_since_2023} HPD ${plural(r.hpd_cases_since_2023, "case")} across the portfolio since 2023</div>
+     <ul class="list plist">${list}</ul>`,
+    "Matched by name on HPD registrations: may include a namesake, and misses LLCs run by others. Toggle “Landlord's buildings” on the map. A portfolio isn't an area, so there's no area verdict here.", true);
 }
 
 function cardArea(f) {
   const r = f.get_neighborhood_context; if (!r) return "";
   const v = r.open_violations_per_apartment || {};
   return card(`Vs. ${r.compared?.rental_buildings} rentals within ${r.radius_miles} mi`,
-    `<div class="big">${fmt(v.this_building)} <small>vs ${fmt(v.area_median)} median /apt</small></div>
-     <div class="vs">${esc(v.this_building_vs_area)}</div>
+    `${headline(fmt(v.this_building), `open violations per apartment here — area median ${fmt(v.area_median)}`)}
+     <div class="line">${esc(v.this_building_vs_area)}</div>
      <ul class="list">${(r.worst_nearby || []).slice(0, 3).map((b) => `<li><span>${esc(b.address || "(no address on file)")}</span><span>${fmt(b.per_apartment)}/apt</span></li>`).join("")}</ul>`,
-    `Snapshot as of ${esc(r.as_of?.open_violations)}. Map dots: open violations per apartment.`);
+    `Snapshot as of ${esc(r.as_of?.open_violations)}. Map dots: open violations per apartment. ${RULE_NOTE}`, false,
+    vsArea(v.this_building, v.area_median));
 }
 
 function sunChart(side) {

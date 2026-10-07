@@ -369,6 +369,38 @@ def main():
         assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
         page.unroute("**/chat")
         print(f"ok  a 41-floor sweep renders as {len(bands)} chart rows (Dec 21 and today), with the 1h+ winter band marked")
+        # 24. Scorecards read at a glance: an area verdict chip where a tool gave a comparison, a summary strip,
+        # and "no record" (never a made-up verdict) for a building HPD has no records for.
+        def report_calls(address):
+            st, calls = {}, []
+            for name, args in [("look_up_building", {"address": address}), ("check_maintenance_record", {}),
+                               ("get_tenant_complaints", {}), ("check_pests", {}), ("check_evictions_and_court", {}),
+                               ("get_landlord_portfolio", {}), ("get_neighborhood_context", {})]:
+                calls.append({"name": name, "args": args, "result": _run_tool(name, args, st)})
+            return calls
+        def panel_for(address, width=1280):
+            calls = report_calls(address)
+            pg = browser.new_context(viewport={"width": width, "height": 900}).new_page()
+            pg.route("**/chat", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"response": "ok", "session_id": json.loads(r.request.post_data)["session_id"], "tool_calls": calls})))
+            pg.goto(BASE)
+            pg.fill("#input", "report"); pg.click("#send")
+            pg.wait_for_selector("#panel .card")
+            return pg
+        pg = panel_for("155 East 92nd Street, Manhattan")
+        maint = pg.locator(".card", has_text="Maintenance")
+        assert maint.locator(".vchip").inner_text().lower() == "worse than area", maint.locator(".vchip").inner_text()
+        assert "open violations — 0.31 per apartment, vs an area median of 0.07" in maint.inner_text()
+        assert pg.locator("#summary-strip .vchip.worse").count() >= 1 and pg.is_visible("#summary-strip")
+        assert pg.locator(".plist li.prow.here").count() == 1 and pg.locator(".plist .pbar").count() >= 2
+        assert pg.locator(".card", has_text="Evictions").locator(".vchip").count() == 0, "no comparison, no chip"
+        pg = panel_for("1 Hanson Place, Brooklyn", 390)
+        assert pg.locator(".card", has_text="Maintenance").locator(".vchip").inner_text().lower() == "better than area"
+        assert pg.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        pg = panel_for("350 5th Avenue, Manhattan")
+        maint = pg.locator(".card", has_text="Maintenance")
+        assert maint.locator(".vchip").inner_text().lower() == "no record" and "isn't HPD-registered" in maint.inner_text()
+        print("ok  verdict chips come only from tool comparisons (worse / better / no record), with a summary strip and a marked portfolio row")
         browser.close()
     print("All UI tests passed.")
 
