@@ -193,5 +193,4 @@ Why those settings:
 
 ## Submission
 
-- **Repo:** submitted on Courseworks. It's private, so the course assistants who grade it (codeboi07, bhuvighosh3, nniishhh, x) are added as GitHub collaborators. They are graders, not team members.
-- **Authors:** I'm working solo, so [`submission.json`](submission.json) lists one author: `aup2005`.
+Authors: aup2005
