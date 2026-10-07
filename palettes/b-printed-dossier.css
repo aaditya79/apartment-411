@@ -1,0 +1,13 @@
+/* B. Printed dossier: deeper paper and rules, darker ink, an oxblood accent. Still light overall. Tokens only. */
+:root {
+  --paper: #e9e0cc; --panel: #ddd1b6; --surface: #f4eddc;
+  --ink: #120e09; --ink-2: #30281d; --muted: #4e4334; --rule: #b3a385;
+  --accent: #6e1f1c; --accent-soft: #efd9d2; --accent-hover: #511512; --on-accent: #ffffff;
+  --brand: #e8b425;
+  --flag: #ad3c15; --flag-bg: #faeae0;
+  --caution: #5c3f04; --caution-bg: #eadcbc;
+  --clear: #255a37; --clear-bg: #d7e4d3;
+  --hover-bg: #fbf6ea; --code-bg: #f8f2e4;
+  --json-key: #6e1f1c; --json-str: #255a37; --json-num: #3d4f8a; --json-lit: #5c3f04;
+  --map-bg: #cfc5ae;
+}

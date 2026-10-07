@@ -1,0 +1,13 @@
+/* A. Cool archival: neutral, faintly cool off-white paper, near-black ink, one ink-blue accent. Tokens only. */
+:root {
+  --paper: #eef0ef; --panel: #e2e5e5; --surface: #f8f9f9;
+  --ink: #101316; --ink-2: #2c3136; --muted: #4b5259; --rule: #c9cfd2;
+  --accent: #1c3e72; --accent-soft: #dfe6f1; --accent-hover: #132c52; --on-accent: #ffffff;
+  --brand: #f2c230;
+  --flag: #86271e; --flag-bg: #f4e0dc;
+  --caution: #835a0a; --caution-bg: #f4ecd8;
+  --clear: #2a6140; --clear-bg: #dceadf;
+  --hover-bg: #ffffff; --code-bg: #fbfcfc;
+  --json-key: #1c3e72; --json-str: #2a6140; --json-num: #6d3b8a; --json-lit: #86271e;
+  --map-bg: #d7dbdc;
+}
