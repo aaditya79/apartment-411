@@ -207,6 +207,16 @@ def main():
             got = page.evaluate("mathToText", raw)
             assert got == want, (raw, got, want)
         print("ok  stray $…$ math is stripped to plain text; dollar amounts are untouched")
+        # 16. The README's three sample queries are word for word the first three start cards, in order.
+        import re
+        readme = (Path(__file__).parent.parent / "README.md").read_text()
+        listed = re.findall(r'^\d\. \*\*(.+?)\*\* "(.+)"$', readme, re.M)
+        cards = page.locator("#examples-start .example")
+        shown = [(cards.nth(i).locator(".k").text_content().strip(),
+                  cards.nth(i).text_content().strip()[len(cards.nth(i).locator(".k").text_content().strip()):].strip())
+                 for i in range(cards.count())]
+        assert len(listed) == 3 and shown == listed, (shown, listed)
+        print("ok  README sample queries match the start cards word for word")
         browser.close()
     print("All UI tests passed.")
 

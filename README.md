@@ -18,11 +18,11 @@ It's built for someone about to sign a lease in NYC, or a current tenant whose l
 
 ## Sample queries for graders
 
-Run these three in order, in one session:
+Run these three in order, in one session. They're the first three cards on the start screen ("Start here"), word for word, so each is one click:
 
-1. "I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?"
-2. "Who owns this building, and how do they treat tenants in their other buildings?"
-3. "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?"
+1. **Should I rent here?** "I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything?"
+2. **The landlord** "Who owns 155 East 92nd Street in Manhattan, and how do they treat tenants in their other buildings?"
+3. **Fact-check a listing** "The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?"
 
 What to expect:
 - **Query 1** runs seven tools: the building lookup, then maintenance, complaints, pests, court, landlord and neighborhood in parallel. It answers with a verdict, red flags, green flags and questions to ask.

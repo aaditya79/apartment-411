@@ -62,7 +62,8 @@ sid1 = s1["session_id"]
 check("look_up_building" in tools_used(s1), "q1 should look up the building")
 check({"check_maintenance_record", "get_landlord_portfolio"} <= set(tools_used(s1)), "q1 should run the report tools")
 
-s = chat("Who owns this building, and how do they treat tenants in their other buildings?", sid1, "2 README q2")
+s = chat("Who owns 155 East 92nd Street in Manhattan, and how do they treat tenants in their other buildings?", sid1,
+         "2 README q2")
 check(s["session_id"] == sid1, "q2 should stay in session 1")
 check("get_landlord_portfolio" in tools_used(s) or "get_landlord_portfolio" in tools_used(s1),
       "q2 should use the portfolio (now or from q1)")
