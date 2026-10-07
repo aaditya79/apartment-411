@@ -14,7 +14,7 @@ It can also draft a repair letter that cites the city's own open violations.
 
 I built it for someone about to sign a lease in NYC, or a tenant whose landlord is slow to fix things. Everything it says comes from public city records through tool calls, and every tool call is shown in the chat with its arguments and result.
 
-**Live:** see `deploy_url` in [`submission.json`](submission.json). The URL is open for grading, with no sign-in needed. The first query after a quiet spell can take up to a minute while city data loads.
+**Live:** [https://apartment-411-j2i7dlw5aq-ue.a.run.app](https://apartment-411-j2i7dlw5aq-ue.a.run.app) (open, no sign-in needed). The first query after a quiet spell can take up to a minute while city data loads.
 
 ## Sample queries for graders
 
