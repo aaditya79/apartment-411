@@ -196,6 +196,18 @@ def test_no_address_call_is_refused_when_a_turn_covers_two_buildings():
     assert "error" not in json.loads(run_tool("check_pests", {}, state))
 
 
+def test_counts_agree_across_tools():
+    state = {}
+    run_tool("look_up_building", {"address": "155 East 92nd Street, Manhattan"}, state)
+    c = json.loads(run_tool("get_tenant_complaints", {}, state))
+    p = json.loads(run_tool("check_pests", {}, state))["rodent_inspections_since_2023"]
+    f = json.loads(run_tool("fact_check_listing", {"listing_text": "A well-maintained building at 155 East 92nd Street, Manhattan."}, state))
+    rel = next(x["related_records"] for x in f["claims"] if x["claim"].startswith("well_maintained"))
+    assert rel["hpd_complaints"]["count"] == c["complaints"] and rel["hpd_complaints"]["per_100_apartments"] == c["complaints_per_100_apartments"], (rel, c)
+    assert {k: rel["rat_inspections"][k] for k in ("inspections", "failed_for_rats")} == {k: p[k] for k in ("inspections", "failed_for_rats")}, (rel, p)
+    assert "per 100 apartments" in rel["hpd_complaints"]["vs_area"] and "scope" in rel["rat_inspections"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

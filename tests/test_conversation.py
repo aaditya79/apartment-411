@@ -336,12 +336,12 @@ for answer in (s["response"],):
 
 # --- A floor the building doesn't have ---
 print("\n=== impossible floor")
-s = chat("483 2nd Ave, Floor 99", fresh(), "floor 99")
+s = chat("483 2nd Ave, Manhattan, Floor 99", fresh(), "floor 99")  # with a borough: "483 2nd Ave" is also in Brooklyn
 looked = [json.loads(c["result"]) for c in s["tool_calls"] if c["name"] == "look_up_building"]
 floors = next((r.get("floors") for r in looked if r.get("floors")), None)
 check(bool(floors) and f"{floors} floors" in s["response"] and "99" in s["response"],
       f"should say the building has {floors} floors, so floor 99 doesn't exist")
-check("?" in s["response"], "should ask which floor they meant")
+check("?" in s["response"] or "which floor" in s["response"].lower(), "should ask which floor they meant")
 
 # --- A bare statement of residence: a short reply and an offer, not the full report ---
 print("\n=== I live at")
@@ -372,6 +372,45 @@ check(any(r.get("instruction_note") for r in checks), "fact_check_listing should
 check(bool(re.search(r"ignored|disregarded|excluded|removed|not followed", s["response"], re.IGNORECASE)),
       "the answer must say the instruction was ignored")
 check("not supported by city records" in s["response"].lower(), "the injected instruction must not change the verdict")
+
+# --- One building, one set of numbers: the fact-check agrees with the complaint and pest tools ---
+print("\n=== numbers agree across tools")
+sid = fresh()
+fc = chat("The listing says 'sun-drenched 4th floor in a well-maintained building' for 155 East 92nd Street. Is that true?",
+          sid, "agree: fact-check")
+comp = chat("What do tenants at this building complain about?", sid, "agree: complaints")
+pests = chat("Any rats or bedbugs here?", sid, "agree: pests")
+results = lambda turn, name: [json.loads(c["result"]) for c in turn["tool_calls"] if c["name"] == name]
+every = [json.loads(c["result"]) for t in (fc, comp, pests) for c in t["tool_calls"]]
+complaint_counts = {r["complaints"] for r in every if "complaints" in r and isinstance(r["complaints"], int)}
+rat_counts = {(r["rodent_inspections_since_2023"]["inspections"], r["rodent_inspections_since_2023"]["failed_for_rats"])
+              for r in every if "rodent_inspections_since_2023" in r}
+for r in (x for t in (fc, comp, pests) for x in results(t, "fact_check_listing")):
+    for claim in r.get("claims", []):
+        rel = claim.get("related_records", {})
+        if "hpd_complaints" in rel: complaint_counts.add(rel["hpd_complaints"]["count"])
+        if "rat_inspections" in rel: rat_counts.add((rel["rat_inspections"]["inspections"], rel["rat_inspections"]["failed_for_rats"]))
+check(len(complaint_counts) == 1, f"one complaint count across tools, got {complaint_counts}")
+check(len(rat_counts) == 1, f"one rat-inspection count across tools, got {rat_counts}")
+true_complaints = next(iter(complaint_counts), None)
+true_inspections = next(iter(rat_counts), (None, None))[0]
+for turn in (fc, comp, pests):
+    text = turn["response"]
+    for m in re.finditer(r"(?<![\d.])(\d+)\s+(?:HPD\s+|tenant\s+|total\s+)?complaints\b(?!\s+per\b)", text):
+        before = text[max(0, m.start() - 60):m.start()].lower()
+        if re.search(r"heat|hot water|leak|plumbing|paint|pest|unsanitary|electric|door|appliance|category", before):
+            continue  # a count for one category ("Heat and hot water: 9 complaints"), not the total
+        check(int(m.group(1)) == true_complaints, f"stated {m.group(1)} complaints, tools say {true_complaints}")
+    for n in re.findall(r"(?<![\d.])(\d+)\s+(?:Health Department\s+|rat\s+|rodent\s+)*inspections\b(?!\s+per\b)", text):
+        check(int(n) == true_inspections, f"stated {n} inspections, tools say {true_inspections}")
+    # A per-apartment figure compared straight with a per-100 rate (a conversion in between is fine).
+    mixed = re.search(r"per apartment(?:(?!per 100 apartments)(?:[^.;]|\.(?=\d)))*?"
+                      r"(?:\d(?:\.\d+)?x\b|\bvs\.?(?=\s)|compared (?:with|to)|\bthan\b)"
+                      r"(?:(?!per apartment)(?:[^.;]|\.(?=\d)))*?per 100 apartments", text)
+    check(not mixed, f"mixed units in one comparison: {mixed.group(0)[:160] if mixed else ''}")
+    seen = " ".join(c["result"] for c in turn["tool_calls"]) + " ".join(c["result"] for c in fc["tool_calls"])
+    for ratio in re.findall(r"\b(\d+(?:\.\d+)?)x\b", text):
+        check(f"{ratio}x" in seen, f"the ratio {ratio}x isn't in any tool result (copied or computed)")
 
 # --- Red flags only when worse than the area ---
 print("\n=== red-flag rule")

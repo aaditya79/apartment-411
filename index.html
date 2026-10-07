@@ -875,7 +875,7 @@ function cardComplaints(f) {
   const months = Object.entries(r.by_month?.counts || {}).slice(-12).map(([m, n]) => [m.replace(/ 20(\d\d)/, " '$1"), n]);
   const cats = Object.entries(r.by_category || {}).slice(0, 5).map(([k, v]) => `<span class="chip">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
   return card("Tenant complaints to HPD · since 2023",
-    `<div class="big">${r.complaints} <small>complaints · ${fmt(r.complaints_per_apartment)} per apt</small></div>
+    `<div class="big">${r.complaints} <small>complaints · ${r.complaints_per_100_apartments != null ? `${fmt(r.complaints_per_100_apartments, 1)} per 100 apts` : `${fmt(r.complaints_per_apartment)} per apt`}</small></div>
      ${area ? `<div class="vs">Heat: ${fmt(area.this_building, 1)} per 100 apts here vs ${fmt(area.area, 1)} nearby</div>` : ""}
      <div class="chips">${cats}</div>
      ${months.length ? `<div class="vs" style="margin-top:8px">${esc((r.by_month.category || "").replace(/_/g, " "))} by month${Object.keys(r.by_month.counts).length > 12 ? " (latest 12 months with complaints)" : ""}</div>${barChart(months)}` : ""}`,

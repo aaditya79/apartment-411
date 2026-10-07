@@ -335,7 +335,8 @@ def get_tenant_complaints(state: dict, address: str | None = None, category: str
         "address": b.label,
         "period": f"since {nyc.SINCE}",
         "complaints": len(complaints),
-        "complaints_per_apartment": per_apartment(len(complaints), b.units),
+        # Per 100 apartments, the unit every area comparison uses, so the two can't be mixed in one sentence.
+        "complaints_per_100_apartments": round(100 * len(complaints) / b.units, 1) if b.units else None,
         "by_category": friendly,
         "category_requested": category,
         "matching_complaints": len(chosen),
@@ -1090,6 +1091,28 @@ def noise_complaints(b: nyc.Building) -> dict:
     return {r["complaint_type"]: int(r["n"]) for r in rows}
 
 
+def related_records(run) -> dict:
+    """Complaints and rat inspections behind a maintenance claim, from the same tools the chat uses, so the
+    counts are identical to get_tenant_complaints and check_pests, with each scope stated."""
+    out = {}
+    try:
+        c = run("get_tenant_complaints", get_tenant_complaints)
+        out["hpd_complaints"] = {"count": c["complaints"], "per_100_apartments": c["complaints_per_100_apartments"],
+                                 "scope": "HPD complaints since 2023, counted once per complaint (as in get_tenant_complaints)"}
+        n = run("get_neighborhood_context", get_neighborhood_context)
+        out["hpd_complaints"]["vs_area"] = n["all_complaints_per_100_apartments_since_2023"]["compare_as"]
+    except (ToolError, DataSourceError, KeyError):
+        pass
+    try:
+        rats = run("check_pests", check_pests)["rodent_inspections_since_2023"]
+        out["rat_inspections"] = {**rats, "scope": "Health Dept. rat inspections of this lot since 2023 (as in check_pests)"}
+        if not rats["inspections"]:
+            out["rat_inspections"]["note"] = "No inspections on record: no evidence either way, not a clean record."
+    except (ToolError, DataSourceError, KeyError):
+        pass
+    return out
+
+
 def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cache: dict) -> dict:
     """One listing claim -> verdict, evidence, and which tool the evidence came from."""
     def run(name: str, fn, **kwargs):
@@ -1145,16 +1168,19 @@ def judge_claim(claim: str, b: nyc.Building, state: dict, floor: int | None, cac
         except (ToolError, DataSourceError):
             pass
         bad = m["open_by_class"]["C"]["count"] or longest > 365
+        related = related_records(run)
         if claim == "unit_condition":
             # 'Pristine' or 'renovated' describes the unit; building records can only partly support it.
             evidence += (" City records describe the building, not this unit's finishes, so a clean record is "
                          "partial support at best. Ask to see the unit and when it was renovated.")
             verdict = PARTLY if hazardous == 0 else CANT_VERIFY
-            return {"verdict": verdict, "evidence": evidence, "source_tool": "check_maintenance_record"}
+            return {"verdict": verdict, "evidence": evidence, "source_tool": "check_maintenance_record",
+                    "related_records": related}
         if bad:
-            return {"verdict": NOT_SUPPORTED, "evidence": evidence, "source_tool": "check_maintenance_record"}
+            return {"verdict": NOT_SUPPORTED, "evidence": evidence, "source_tool": "check_maintenance_record",
+                    "related_records": related}
         return {"verdict": SUPPORTED if hazardous == 0 else CANT_VERIFY, "evidence": evidence,
-                "source_tool": "check_maintenance_record"}
+                "source_tool": "check_maintenance_record", "related_records": related}
 
     if claim == "quiet":
         noise = cache.setdefault("noise", noise_complaints(b))
