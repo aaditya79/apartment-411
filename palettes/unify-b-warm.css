@@ -1,0 +1,12 @@
+/* Unified system, version B: the original warm cream paper. Same roles as W (black ink + one yellow). Tokens only. */
+:root {
+  --paper: #f4efe4; --panel: #ebe5d7; --surface: #fbf8f1;
+  --ink: #1b1813; --ink-2: #3d382f; --muted: #5a5448; --rule: #d9d0bd;
+  --accent: #f2c230; --accent-soft: #fbedb8; --accent-hover: #e5b21c; --on-accent: #1b1813; --brand: #f2c230;
+  --flag: #94352a; --flag-bg: #f2e0da;
+  --caution: #7a5208; --caution-bg: #ecdcca;
+  --clear: #2f6340; --clear-bg: #dfeadf;
+  --hover-bg: #fbedb8; --code-bg: #fffef9;
+  --json-key: #1b1813; --json-str: #3d382f; --json-num: #5a5448; --json-lit: #5a5448;
+  --focus: #1b1813; --map-bg: #ddd8cc;
+}

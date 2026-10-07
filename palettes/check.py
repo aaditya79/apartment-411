@@ -94,8 +94,11 @@ def check(name, t):
     print("  RESULT:", "all constraints hold" if not fails else "FAILS: " + ", ".join(fails))
     return not fails
 
-base = tokens(re.search(r":root\s*\{(.*?)\n\}", (ROOT / "index.html").read_text(), re.S).group(1))
-ok = check("current", base)
-for f in sorted((ROOT / "palettes").glob("*.css")):
-    ok &= check(f.stem, {**base, **tokens(f.read_text())})
-sys.exit(0 if ok else 1)
+if __name__ == "__main__":
+    # The A-D palettes, where the accent is ink-blue text and the focus ring. The unified black + yellow system
+    # (unify-*.css, and :root on the color-unify branch) has different roles: palettes/check_unified.py.
+    base = tokens(re.search(r":root\s*\{(.*?)\n\}", (ROOT / "index.html").read_text(), re.S).group(1))
+    ok = True
+    for f in sorted((ROOT / "palettes").glob("[a-d]-*.css")):
+        ok &= check(f.stem, {**base, **tokens(f.read_text())})
+    sys.exit(0 if ok else 1)
