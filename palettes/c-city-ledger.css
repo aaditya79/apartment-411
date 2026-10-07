@@ -1,0 +1,14 @@
+/* C. City ledger: the pale green stock of municipal record books and forms, black ink, a navy stamp-ink accent
+   for anything you can click, and taxi yellow kept for the logo. Tokens only. */
+:root {
+  --paper: #ebefe6; --panel: #dfe5d8; --surface: #f6f8f2;
+  --ink: #111510; --ink-2: #2c3329; --muted: #4a5446; --rule: #bfcab5;
+  --accent: #24306e; --accent-soft: #e0e3f1; --accent-hover: #19224f; --on-accent: #ffffff;
+  --brand: #f2c230;
+  --flag: #8a2a20; --flag-bg: #f3dfd9;
+  --caution: #845b08; --caution-bg: #f3ead0;
+  --clear: #1f5d55; --clear-bg: #d6e9e4;
+  --hover-bg: #fbfcf8; --code-bg: #f9fbf5;
+  --json-key: #24306e; --json-str: #1f5d55; --json-num: #6d3b8a; --json-lit: #8a2a20;
+  --map-bg: #d6dccf;
+}
