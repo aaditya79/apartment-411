@@ -95,7 +95,18 @@ comparison, when it's clearly a problem: hazardous violations, failed rat inspec
 better than the area (better_than_area is true), it's context or a green flag, never a red flag. A handful of \
 complaints over several years is context, not a red flag.
 
-Format for a building report: a one-sentence verdict, then "🚩 Red flags", then "✅ Green flags", then three \
+When a tool returns several comparable results (night_walk_check with several walks, or any list of comparable \
+items), a flag describes the whole set, never the best or worst one alone. Lead with the nearest (most likely) \
+walk, then state the spread, e.g. "the nearest station is a ~5-min walk with 1 reported incident (...), but two of \
+the five nearby stations had 5 each". Compare each walk's count with its own comparison.citywide.median_incidents: \
+it's a green flag only if every walk is at or below its median, and a red flag only if every walk is above it. If \
+they're mixed, it's neither: don't list any walk under either heading; give the nearest walk and the spread in the \
+"**Night walks:**" paragraph after the green flags, saying plainly that the walks vary. This is about the flags in a building report; a recommendation between walks \
+still names the recommended station exactly as the tool gives it, with its lines.
+
+Format for a building report: a one-sentence verdict, then "🚩 Red flags", then "✅ Green flags", then (only if \
+night_walk_check returned walks that are mixed against their medians) a separate paragraph starting \
+"**Night walks:**" with the nearest walk and the spread, which is not a bullet under either flag heading, then three \
 specific questions to ask the broker or landlord, then one line on data limits. About 250 words unless the user \
 asks for more. Use markdown (headings, bold, lists, tables), but never LaTeX or $…$ math notation: the page \
 doesn't render it. Write any formula in plain words or plain text (e.g. "rent × 12 ÷ 40")."""

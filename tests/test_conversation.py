@@ -62,6 +62,49 @@ sid1 = s1["session_id"]
 check("look_up_building" in tools_used(s1), "q1 should look up the building")
 check({"check_maintenance_record", "get_landlord_portfolio"} <= set(tools_used(s1)), "q1 should run the report tools")
 
+
+def flag_sections(text: str) -> dict:
+    """The bullets under the red and green flag headings (up to the next heading or bold label)."""
+    out = {}
+    for name, start in (("red", r"Red flags"), ("green", r"Green flags")):
+        m = re.search(start + r"(.*?)(?=\n\s*(?:#+|\*\*|🚩|✅|QUESTIONS|Questions|Data limits)|\Z)", text, re.S)
+        out[name] = [b for b in re.split(r"\n\s*[-*•]\s+", m.group(1)) if b.strip()] if m else []
+    return out
+
+
+# Several night walks: a flag describes the set, not the best (or worst) walk alone. Checked on q1 when it ran the
+# night walk, and always on a report that asks for it.
+def check_walk_flags(turn: dict, label: str) -> bool:
+    walk_sets = [json.loads(c["result"]).get("walks", []) for c in turn["tool_calls"] if c["name"] == "night_walk_check"]
+    walk_sets = [w for w in walk_sets if len(w) > 1]
+    if not walk_sets:
+        return False
+    walks = walk_sets[-1]
+    names = {w["station"]["name"] for w in walks}
+    about_walks = re.compile(r"night walk|walk from|walk home|subway|\bstations?\b|\b\d+-min", re.IGNORECASE)
+    spread = re.compile(r"\b(other|two|three|four|five|six|several|all|each|both|rest)\b[^.]{0,40}\b(stations?|walks?)\b"
+                        r"|\bvar(y|ies|ied)\b|\branges?\b|\branged\b|\bspread\b|\bbetween \d+ and \d+", re.IGNORECASE)
+    sections = flag_sections(turn["response"])
+    walk_bullets = {side: [b for b in bullets if about_walks.search(b)] for side, bullets in sections.items()}
+    for side, bullets in walk_bullets.items():
+        for b in bullets:
+            check(sum(n in b for n in names) >= 2 or bool(spread.search(b)),
+                  f"{label}: a {side} flag cites one night walk without the others: {b.strip()[:160]}")
+    at_or_below = [w["incidents_on_route"] <= w["comparison"]["citywide"]["median_incidents"] for w in walks]
+    if any(at_or_below) and not all(at_or_below):  # mixed: neither a green nor a red flag
+        check(not walk_bullets["green"] and not walk_bullets["red"],
+              f"{label}: walks are mixed against their medians, so they belong under neither heading: {walk_bullets}")
+    print(f"   {label}: night walks returned: {len(walks)}; at or below median: {sum(at_or_below)}; flag bullets about walks: "
+          f"{ {k: len(v) for k, v in walk_bullets.items()} }")
+    return True
+
+
+check_walk_flags(s1, "q1")
+s = chat("I'm thinking of renting at 155 East 92nd Street in Manhattan. Should I worry about anything? Include the walk "
+         "home from the subway at night.", fresh(), "report with night walks")
+check(check_walk_flags(s, "report with night walks"), "the report should run night_walk_check and return several walks")
+
+
 s = chat("Who owns 155 East 92nd Street in Manhattan, and how do they treat tenants in their other buildings?", sid1,
          "2 README q2")
 check(s["session_id"] == sid1, "q2 should stay in session 1")
