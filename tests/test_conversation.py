@@ -154,7 +154,10 @@ check(bool(reviews) and all("doesn't look like a residential lease" in r.get("er
       "review_lease must return the not-a-lease error")
 check(not re.search(r"bed ?bug|window guard|lead.?paint|sprinkler|\bflags?\b", s["response"], re.IGNORECASE),
       "no flags or missing-disclosure findings for a non-lease")
-check("Tiemann" not in s["response"], "the document must not be labelled with the conversation's building")
+# The review must not label the document with the building discussed earlier. The model may still name that
+# building when asking for the right file ("please attach the lease for 41 Tiemann Place").
+check(not any("tiemann" in json.dumps(r).lower() for r in reviews),
+      "the review must not label the document with the conversation's building")
 check(bool(re.search(r"(isn't|is not|doesn't|does not)[^.]{0,40}(lease)", s["response"], re.IGNORECASE)),
       "the answer should say plainly the file isn't a lease")
 
